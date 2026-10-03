@@ -59,7 +59,7 @@ class MCPClientTool(BaseTool):
 
     async def _arun(self, **kwargs):
         from common.security.content import enabled
-        from common.security.context import active_call
+        from common.security.context import active_call, current_context
         from common.security.policy import digest
         from common.security.runtime import untrusted
         if not self.session:
@@ -71,7 +71,8 @@ class MCPClientTool(BaseTool):
         expected = digest({"tool": self.name, "args": kwargs})
         if enabled() and (permit is None or not permit.consume(expected)):
             return "[SECURITY_BLOCKED] MCP calls require permission for these exact arguments"
-        emitter = get_emitter_sync(self.thread_id)
+        context = current_context.get()
+        emitter = get_emitter_sync(context.thread_id if context and context.thread_id else self.thread_id)
         await emitter.emit(ToolEventType.TOOL_START, {"tool": self.name, "args": kwargs, "server": self.server_id})
         result = await asyncio.wait_for(self.session.call_tool(self.original_name, kwargs), timeout=60)
         parts = [getattr(item, "text", "") for item in (getattr(result, "content", None) or [])]

@@ -483,6 +483,17 @@ async def test_mcp_permit_is_exact_and_output_is_sanitized(monkeypatch):
     from tools.core.mcp_clients import MCPClientTool
 
     calls = []
+    emitted_threads = []
+
+    class Emitter:
+        async def emit(self, *args):
+            pass
+
+    def emitter_for(thread_id):
+        emitted_threads.append(thread_id)
+        return Emitter()
+
+    monkeypatch.setattr("tools.core.mcp_clients.get_emitter_sync", emitter_for)
 
     class Session:
         async def call_tool(self, name, args):
@@ -515,6 +526,7 @@ async def test_mcp_permit_is_exact_and_output_is_sanitized(monkeypatch):
         output = await SecureTool(proxy).ainvoke({"query": "public fact"})
         assert FAKE_KEY not in output and "REDACTED" in output
         assert calls == [("lookup", {"query": "public fact"})]
+        assert emitted_threads == ["thread-a"]
 
 
 def test_file_execution_permit_cannot_be_reused_or_follow_hardlinks(tmp_path):
