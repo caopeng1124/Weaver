@@ -38,6 +38,8 @@ export const translations = {
     deepsearch: 'Deep Search',
     direct: 'Direct',
     ultra: 'Deep Research',
+    automaticRoutingHint: 'Search and tools are selected automatically',
+    deepResearchHint: 'Explore a topic in depth',
     mcp: 'MCP',
     web: 'Web',
 
@@ -145,6 +147,8 @@ export const translations = {
     deepsearch: '深度搜索',
     direct: '直答',
     ultra: '深度研究',
+    automaticRoutingHint: '自动判断是否需要搜索或工具',
+    deepResearchHint: '深入研究一个主题',
     mcp: 'MCP',
     web: '网络',
 

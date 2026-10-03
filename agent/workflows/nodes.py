@@ -1058,6 +1058,8 @@ def route_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     configurable = _configurable(config)
     mode_info = configurable.get("search_mode", {}) or {}
     override_mode = mode_info.get("mode")
+    if override_mode == "auto":
+        override_mode = None
     max_revisions = configurable.get("max_revisions", state.get("max_revisions", 0))
     confidence_threshold = float(configurable.get("routing_confidence_threshold", 0.6))
 

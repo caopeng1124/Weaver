@@ -2,12 +2,13 @@ import { sandboxHeaders } from '@/lib/localSandbox'
 import { useState, useRef, useCallback } from 'react'
 import { Message, Artifact, ToolInvocation, ImageAttachment, ProcessEvent, RunMetrics, MessageSource } from '@/types/chat'
 import { getApiBaseUrl } from '@/lib/api'
+import { ChatMode, toSearchMode } from '@/lib/chatMode'
 import { createLegacyChatStreamState, consumeLegacyChatStreamChunk } from '@/lib/chatStreamProtocol'
 import { ApprovalDecision, buildApprovalPayload } from '@/lib/securityApproval'
 
 interface UseChatStreamProps {
   selectedModel: string
-  searchMode: string
+  searchMode: ChatMode
 }
 
 export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps) {
@@ -59,7 +60,7 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
             messages: messageHistory.map(m => ({ role: m.role, content: m.content })),
             stream: true,
             model: selectedModel,
-            search_mode: searchMode,
+            search_mode: toSearchMode(searchMode),
             thread_id: threadId,
             images: (images || []).map(img => ({
               name: img.name,
@@ -387,7 +388,7 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
             thread_id: threadId,
             payload: approvalPayload,
             model: selectedModel,
-            search_mode: searchMode
+            search_mode: toSearchMode(searchMode)
           })
         }
       )

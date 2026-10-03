@@ -23,6 +23,7 @@ import { BrowserViewer } from './BrowserViewer'
 import { SecurityApprovalCard } from './SecurityApprovalCard'
 import { LocalSandboxPanel } from './LocalSandboxPanel'
 import { getApiBaseUrl } from '@/lib/api'
+import { ChatMode } from '@/lib/chatMode'
 
 export function Chat() {
   // UI State
@@ -34,7 +35,7 @@ export function Chat() {
     }).catch(() => {})
   }, [])
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL)
-  const [searchMode, setSearchMode] = useState('') // empty = direct LLM only
+  const [searchMode, setSearchMode] = useState<ChatMode>('auto')
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [showMobileArtifacts, setShowMobileArtifacts] = useState(false)
   const [isArtifactsOpen, setIsArtifactsOpen] = useState(true)
@@ -128,7 +129,7 @@ export function Chat() {
       setInput('')
       setThreadId(null)
       setPendingInterrupt(null)
-      setSearchMode('') // default to direct LLM
+      setSearchMode('auto')
       handleStop() // Abort any ongoing request
   }
 
@@ -155,6 +156,7 @@ export function Chat() {
     if (loadedMessages) {
       setMessages(loadedMessages)
       setCurrentSessionId(id)
+      setSearchMode('auto')
       setCurrentView('dashboard') // Ensure we are on the chat view
       // Reset other state
       setArtifacts([]) 
@@ -214,9 +216,8 @@ export function Chat() {
       }
   }
 
-  const handleStarterClick = (text: string, mode: string) => {
+  const handleStarterClick = (text: string) => {
       setInput(text)
-      setSearchMode(mode)
   }
 
   const handleAtBottomChange = (atBottom: boolean) => {
@@ -248,8 +249,6 @@ export function Chat() {
           {messages.length === 0 ? (
             <div className="h-full w-full p-4 overflow-y-auto">
                <EmptyState
-                  selectedMode={searchMode}
-                  onModeSelect={setSearchMode}
                   onStarterClick={handleStarterClick}
                />
             </div>

@@ -737,6 +737,9 @@ class Message(BaseModel):
 
 
 class SearchMode(BaseModel):
+    autoRoute: bool = Field(
+        default=False, description="Let the router choose how to handle the request"
+    )
     useWebSearch: bool = False
     useAgent: bool = False
     useDeepSearch: bool = False
@@ -757,6 +760,8 @@ def _coerce_search_mode_input(value: Any) -> SearchMode | None:
 
     if isinstance(value, str):
         lowered = value.strip().lower()
+        if lowered == "auto":
+            return SearchMode(autoRoute=True)
         if lowered in {"", "direct"}:
             return SearchMode()
         if lowered in {"web", "search", "tavily"}:
@@ -772,6 +777,8 @@ def _coerce_search_mode_input(value: Any) -> SearchMode | None:
         return SearchMode()
 
     if isinstance(value, dict):
+        if value.get("autoRoute") or value.get("mode") == "auto":
+            return SearchMode(autoRoute=True)
         use_web = bool(value.get("useWebSearch", value.get("use_web", False)))
         use_agent = bool(value.get("useAgent", value.get("use_agent", False)))
         use_deep = bool(value.get("useDeepSearch", value.get("use_deep", False)))
@@ -1632,6 +1639,19 @@ def _compact_tool_args(tool_input: Any) -> Dict[str, Any]:
 
 
 def _normalize_search_mode(search_mode: SearchMode | Dict[str, Any] | str | None) -> Dict[str, Any]:
+    if isinstance(search_mode, SearchMode):
+        automatic = search_mode.autoRoute
+    elif isinstance(search_mode, str):
+        automatic = search_mode.strip().lower() == "auto"
+    elif isinstance(search_mode, dict):
+        automatic = bool(search_mode.get("autoRoute") or search_mode.get("mode") == "auto")
+    else:
+        automatic = False
+    if automatic:
+        return {
+            "mode": "auto", "use_web": False, "use_agent": False,
+            "use_deep": False, "use_deep_prompt": False,
+        }
     if isinstance(search_mode, SearchMode):
         use_web = search_mode.useWebSearch
         use_agent = search_mode.useAgent

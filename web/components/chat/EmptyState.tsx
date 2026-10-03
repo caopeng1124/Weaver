@@ -1,90 +1,38 @@
 'use client'
 
-import React from 'react'
-import { Button } from '@/components/ui/button'
-import { ArrowRight, Sparkles, TrendingUp, Code2, BookOpen } from 'lucide-react'
+import { Sparkles, TrendingUp, Code2, BookOpen } from 'lucide-react'
 import { useI18n } from '@/lib/i18n/i18n-context'
-import { cn } from '@/lib/utils'
 
 interface EmptyStateProps {
-  selectedMode: string
-  onModeSelect: (mode: string) => void
-  onStarterClick?: (text: string, mode: string) => void
+  onStarterClick?: (text: string) => void
 }
 
-export function EmptyState({ selectedMode, onModeSelect, onStarterClick }: EmptyStateProps) {
+export function EmptyState({ onStarterClick }: EmptyStateProps) {
   const { t } = useI18n()
-
   const starters = [
-    {
-      icon: TrendingUp,
-      text: t('starterAnalyze'),
-      mode: "ultra"
-    },
-    {
-      icon: Code2,
-      text: t('starterWrite'),
-      mode: "agent"
-    },
-    {
-      icon: BookOpen,
-      text: t('starterSummarize'),
-      mode: "web"
-    },
-    {
-      icon: Sparkles,
-      text: t('starterPlan'),
-      mode: "direct"
-    }
+    { icon: TrendingUp, text: t('starterAnalyze') },
+    { icon: Code2, text: t('starterWrite') },
+    { icon: BookOpen, text: t('starterSummarize') },
+    { icon: Sparkles, text: t('starterPlan') },
   ]
 
   return (
-    <div className="flex flex-col items-center justify-center h-full w-full max-w-4xl mx-auto p-6 animate-in fade-in zoom-in-95 duration-500">
-      
-      {/* Hero Section */}
-      <div className="flex flex-col items-center space-y-6 mb-12 text-center">
-        <div className="relative group cursor-default">
-            <div className="absolute inset-0 bg-primary/20 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-500 opacity-50" />
-            <div className="relative h-24 w-24 rounded-3xl flex items-center justify-center shadow-xl shadow-primary/20 ring-1 ring-white/20 overflow-hidden bg-white">
-              <img src="/logo.png" alt="Weaver" className="h-20 w-20 object-contain" />
-            </div>
-        </div>
-        
-        <div className="space-y-2 max-w-lg">
-            <h2 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/70">
-                {t('emptyStateTitle')}
-            </h2>
-            <p className="text-muted-foreground text-lg">
-                {t('emptyStateSubtitle')} <br className="hidden sm:block"/>
-                {t('emptyStateDescription')}
-            </p>
-        </div>
+    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col items-center justify-center px-4 py-8">
+      <div className="mb-8 space-y-3 text-center">
+        <img src="/logo.png" alt="Weaver" className="mx-auto h-12 w-12 object-contain" />
+        <h2 className="text-3xl font-semibold tracking-tight">{t('emptyStateTitle')}</h2>
+        <p className="text-sm text-muted-foreground">{t('askAnything')}</p>
       </div>
-
-      {/* Starter Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
-        {starters.map((starter, i) => (
+      <div className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
+        {starters.map(starter => (
           <button
-            key={i}
-            onClick={() => {
-                if (onStarterClick) {
-                    onStarterClick(starter.text, starter.mode)
-                }
-            }}
-            className="group flex items-start gap-4 p-4 rounded-xl border bg-card/50 hover:bg-card hover:shadow-md hover:border-primary/20 transition-all duration-300 text-left"
+            key={starter.text}
+            type="button"
+            onClick={() => onStarterClick?.(starter.text)}
+            className="flex items-start gap-3 rounded-xl border border-border/60 p-4 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
           >
-            <div className="p-2 rounded-lg bg-muted group-hover:bg-primary/10 group-hover:text-primary transition-colors">
-                <starter.icon className="h-5 w-5" />
-            </div>
-            <div className="flex-1 space-y-1">
-                <p className="text-sm font-medium leading-snug group-hover:text-primary transition-colors">
-                    {starter.text}
-                </p>
-                <div className="flex items-center gap-1 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0">
-                    <span>{t('useMode')} {starter.mode} {t('mode')}</span>
-                    <ArrowRight className="h-3 w-3" />
-                </div>
-            </div>
+            <starter.icon className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{starter.text}</span>
           </button>
         ))}
       </div>
