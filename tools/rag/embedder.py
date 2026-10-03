@@ -5,7 +5,7 @@ Generates embeddings using OpenAI API or compatible endpoints.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,8 @@ class Embedder:
             batch = texts[i:i + batch_size]
 
             try:
-                kwargs = {"model": self.model, "input": batch}
+                from common.security.content import redact
+                kwargs = {"model": self.model, "input": redact(batch)}
                 if self.dimensions:
                     kwargs["dimensions"] = self.dimensions
 

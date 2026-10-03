@@ -9,9 +9,8 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from langchain_openai import ChatOpenAI
-
 from common.config import settings
+from common.security.models import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 

@@ -20,6 +20,7 @@ import { Discover } from '@/components/views/Discover'
 import { Library } from '@/components/views/Library'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { BrowserViewer } from './BrowserViewer'
+import { SecurityApprovalCard } from './SecurityApprovalCard'
 
 export function Chat() {
   // UI State
@@ -327,20 +328,7 @@ export function Chat() {
                 </div>
 
                 {pendingInterrupt && (
-                <div className="mx-4 mb-3 p-3 border rounded-xl bg-amber-50 text-amber-900 shadow-sm flex flex-col gap-2">
-                    <div className="text-sm font-semibold">Tool approval required</div>
-                    <div className="text-xs text-amber-800">
-                    {pendingInterrupt.message || pendingInterrupt?.prompts?.[0]?.message || 'Approve tool execution to continue.'}
-                    </div>
-                    <div className="flex gap-2">
-                    <Button size="sm" onClick={handleApproveInterrupt} disabled={isLoading}>
-                        Approve & Continue
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setPendingInterrupt(null)} disabled={isLoading}>
-                        Dismiss
-                    </Button>
-                    </div>
-                </div>
+                  <SecurityApprovalCard key={JSON.stringify(pendingInterrupt)} pending={pendingInterrupt} busy={isLoading} onDecision={handleApproveInterrupt} />
                 )}
            </>
         )}

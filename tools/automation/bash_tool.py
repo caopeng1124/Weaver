@@ -1,9 +1,11 @@
 import shlex
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from langchain.tools import tool
+
+from common.security.content import enabled
 
 SAFE_DEFAULT_CWD = Path(".")
 DEFAULT_TIMEOUT = 20  # seconds
@@ -20,6 +22,8 @@ def safe_bash(cmd: str, cwd: Optional[str] = None, timeout: int = DEFAULT_TIMEOU
         cwd: optional working directory (default repo root)
         timeout: seconds before kill
     """
+    if enabled():
+        return "[SECURITY_BLOCKED] Host shell execution is disabled by the security policy"
     parts = shlex.split(cmd)
     if any(part in DISALLOWED for part in parts):
         return "Error: disallowed command"

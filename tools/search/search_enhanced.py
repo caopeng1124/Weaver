@@ -18,10 +18,10 @@ import textwrap
 from typing import Any, Dict, List, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from tavily import TavilyClient
 
 from common.config import settings
+from common.security.models import ChatOpenAI
 from tools.core.base import ToolResult, WeaverTool, tool_schema
 
 logger = logging.getLogger(__name__)
@@ -416,8 +416,8 @@ if __name__ == "__main__":
     tool = TavilySearchTool()
 
     print(f"\nRegistered methods: {tool.list_methods()}")
-    print(f"\nSchemas:")
-    for name, schema in tool.get_schemas().items():
+    print("\nSchemas:")
+    for _name, schema in tool.get_schemas().items():
         print(f"  - {schema.get('name')}: {schema.get('description')[:60]}...")
 
     # Test single search

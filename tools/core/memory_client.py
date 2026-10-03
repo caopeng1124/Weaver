@@ -4,6 +4,9 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from common.config import settings
+from common.security.content import redact_text
+from common.security.context import current_context
+from common.security.runtime import SecurityViolation, untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,11 @@ _legacy_fallback_path = _ROOT_DIR / ".memory_store.json"
 
 
 def _normalize_user_id(user_id: Optional[str]) -> str:
+    if settings.security_enabled and settings.internal_api_key:
+        context = current_context.get()
+        if not context:
+            raise SecurityViolation("Memory access requires a trusted execution identity")
+        return context.principal
     user = (user_id or settings.memory_user_id or "default_user").strip()
     return user or "default_user"
 
@@ -108,6 +116,7 @@ def _fallback_save(data: dict) -> None:
 
 def add_memory_entry(content: str, user_id: Optional[str] = None) -> bool:
     """Store a memory entry (long-term)."""
+    content = untrusted(content, source="memory_write")
     user = _normalize_user_id(user_id)
     if not content:
         return False
@@ -144,6 +153,7 @@ def fetch_memories(
     query: str = "*", user_id: Optional[str] = None, limit: Optional[int] = None
 ) -> List[str]:
     """Retrieve memories (most recent first)."""
+    query = redact_text(query)
     user = _normalize_user_id(user_id)
     k = limit or settings.memory_top_k
 
@@ -204,11 +214,11 @@ def fetch_memories(
                                     break
 
             if out:
-                return out[:k]
+                return untrusted(out[:k], source="recalled_memory")
         except Exception as e:
             logger.warning(f"mem0 search failed: {e}")
 
     # Fallback to local JSON store (no semantic search, just recent)
     data = _fallback_load()
     entries = data.get(user, [])
-    return list(reversed(entries))[:k]
+    return untrusted(list(reversed(entries))[:k], source="recalled_memory")

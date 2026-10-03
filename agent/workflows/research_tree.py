@@ -24,10 +24,10 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 
 from common.cancellation import check_cancellation as _check_cancel_token
 from common.config import settings
+from common.security.models import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 

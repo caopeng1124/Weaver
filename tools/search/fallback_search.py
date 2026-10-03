@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain.tools import tool
 
 from common.config import settings
+from common.security.boundaries import research_boundary
 from tools.search.providers import (
     bing_search,
     exa_search,
@@ -55,6 +56,7 @@ _ENGINE_ALIASES = {
 }
 
 
+@research_boundary()
 def run_fallback_search(
     *,
     query: str,

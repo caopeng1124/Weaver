@@ -2,9 +2,9 @@ import json
 from typing import List
 
 from langchain.tools import tool
-from langchain_openai import ChatOpenAI
 
 from common.config import settings
+from common.security.models import ChatOpenAI
 from prompts.planning import PLANNING_SYSTEM_PROMPT
 
 

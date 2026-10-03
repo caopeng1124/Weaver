@@ -12,10 +12,10 @@ from typing import Any, Dict, List, Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from common.config import settings
+from common.security.models import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 

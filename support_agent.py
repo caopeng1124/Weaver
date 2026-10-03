@@ -11,11 +11,11 @@ import json
 from typing import Annotated, List, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from common.config import settings
+from common.security.models import ChatOpenAI
 from tools.core.memory_client import fetch_memories, store_interaction
 
 

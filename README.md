@@ -32,6 +32,7 @@
 - **可扩展**：支持 MCP（Model Context Protocol）桥接第三方工具
 - **契约对齐**：OpenAPI → 前端/SDK TS types 自动生成，避免接口漂移
 - **流式体验**：SSE 事件流 + 工具 activity 面板 + 长代码输出（虚拟滚动/查找/全屏）
+- **安全执行**：工具权限与单次审批、提示注入检测与隔离、敏感信息脱敏；安全模式默认限制代码与浏览器工具，见[安全功能与演示](docs/agent-security.md)
 
 ---
 
@@ -98,6 +99,7 @@ pnpm -C web dev
 | [配置说明](docs/configuration.md) | `.env` / `web/.env.local` / Agent / 触发器 / MCP |
 | [使用指南](docs/usage.md) | 模式选择、Deep Research、代码执行、浏览器自动化 |
 | [部署与加固](docs/deployment.md) | Docker/Compose、反代鉴权、限流、SSE 注意事项 |
+| [智能体安全功能](docs/agent-security.md) | 权限与审批、提示注入防护、DLP、面试演示与边界 |
 | [开发指南](docs/development.md) | 本地开发脚本、测试、Lint、日志 |
 | [API 说明](docs/api.md) | OpenAPI 合约、常用端点、SSE 调用示例 |
 | [流式协议](docs/chat-streaming.md) | SSE/legacy 协议细节与回滚策略 |

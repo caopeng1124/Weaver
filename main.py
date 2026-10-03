@@ -72,6 +72,10 @@ from common.config import settings
 from common.logger import get_logger, setup_logging
 from common.metrics import metrics_registry
 from common.proxy_env import normalize_socks_proxy_env
+from common.security.content import redact, redact_text
+from common.security.context import SecurityContext, current_context
+from common.security.runtime import untrusted
+from common.security.store import ApprovalError, SecurityStore
 from common.sse import (
     format_sse_event,
     format_sse_retry,
@@ -186,6 +190,7 @@ async def log_requests(request: Request, call_next):
     """Log all HTTP requests, enforce internal auth, and apply basic rate limiting."""
     request_id = (request.headers.get("X-Request-ID") or "").strip() or str(uuid.uuid4())[:8]
     start_time = time.time()
+    security_token = None
 
     if http_inprogress:
         http_inprogress.inc()
@@ -287,7 +292,13 @@ async def log_requests(request: Request, call_next):
                 },
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        elif settings.security_enabled and settings.app_env in {"prod", "production"} and not internal_key and path.startswith("/api/"):
+            response = JSONResponse(status_code=503, content={"detail": "Production security requires trusted API authentication"})
         else:
+            security_token = current_context.set(SecurityContext(
+                principal=request.state.principal_id if internal_key else "local",
+                run_id=request_id,
+            ))
             response = await call_next(request)
 
         response.headers["X-Request-ID"] = request_id
@@ -320,6 +331,8 @@ async def log_requests(request: Request, call_next):
             http_requests_total.labels(request.method, request.url.path, 500).inc()
         raise
     finally:
+        if security_token is not None:
+            current_context.reset(security_token)
         if http_inprogress:
             http_inprogress.dec()
 
@@ -705,6 +718,11 @@ class Message(BaseModel):
     role: str
     content: str
 
+    @field_validator("content")
+    @classmethod
+    def _protect_content(cls, value: str) -> str:
+        return redact_text(value)
+
 
 class SearchMode(BaseModel):
     useWebSearch: bool = False
@@ -962,6 +980,11 @@ class ResearchRequest(BaseModel):
     user_id: Optional[str] = None
     images: Optional[List[ImagePayload]] = None
 
+    @field_validator("query")
+    @classmethod
+    def _protect_query(cls, value: str) -> str:
+        return redact_text(value)
+
     @field_validator("search_mode", mode="before")
     @classmethod
     def _coerce_search_mode(cls, value: Any) -> SearchMode | None:
@@ -973,6 +996,11 @@ class ChatResponse(BaseModel):
     content: str
     role: str = "assistant"
     timestamp: str
+
+    @field_validator("content")
+    @classmethod
+    def _protect_content(cls, value: str) -> str:
+        return redact_text(value)
 
 
 class GraphInterruptResumeRequest(BaseModel):
@@ -1013,11 +1041,21 @@ class SupportChatRequest(BaseModel):
     user_id: Optional[str] = "default_user"
     stream: bool = False  # reserved for future
 
+    @field_validator("message")
+    @classmethod
+    def _protect_message(cls, value: str) -> str:
+        return redact_text(value)
+
 
 class SupportChatResponse(BaseModel):
     content: str
     role: str = "assistant"
     timestamp: str
+
+    @field_validator("content")
+    @classmethod
+    def _protect_content(cls, value: str) -> str:
+        return redact_text(value)
 
 
 class CancelRequest(BaseModel):
@@ -1394,7 +1432,7 @@ async def format_stream_event(event_type: str, data: Any) -> str:
 
     Format: {type}:{json_data}\n
     """
-    payload = {"type": event_type, "data": data}
+    payload = {"type": event_type, "data": redact(data)}
     return f"0:{json.dumps(payload)}\n"
 
 
@@ -1660,7 +1698,7 @@ def _store_search(query: str, user_id: str, limit: int = 3) -> List[str]:
                     texts.append(str(text))
             elif isinstance(value, str):
                 texts.append(value)
-        return texts[:limit]
+        return untrusted(texts[:limit], source="stored_memory")
     except Exception as e:
         logger.debug(f"Store search failed: {e}")
         return []
@@ -1672,7 +1710,7 @@ def _store_add(query: str, content: str, user_id: str):
     namespace = (user_id, "memories")
     try:
         key = f"mem_{uuid.uuid4().hex}"
-        store.put(namespace, key, {"query": query, "content": content})
+        store.put(namespace, key, {"query": redact_text(query), "content": untrusted(content, source="memory_write")})
     except Exception as e:
         logger.debug(f"Store add failed: {e}")
 
@@ -1738,6 +1776,10 @@ async def stream_agent_events(
     Supports cancellation via cancellation_manager.
     """
     event_count = 0
+    input_text = redact_text(input_text)
+    security_context = current_context.get()
+    if security_context:
+        security_context.thread_id = thread_id
     start_time = time.time()
     was_interrupted = False
     emit_main_text = False
@@ -1786,10 +1828,13 @@ async def stream_agent_events(
     # Set up event emitter for tool visualization
     emitter = await get_emitter(thread_id)
     event_queue: asyncio.Queue = asyncio.Queue()
+    event_available = asyncio.Event()
+    next_event_task = None
 
     async def tool_event_listener(event):
         """Forward tool events to the queue for SSE streaming."""
         await event_queue.put(event)
+        event_available.set()
 
     emitter.on_event(tool_event_listener)
 
@@ -1838,12 +1883,12 @@ async def stream_agent_events(
         store_memories = _store_search(input_text, user_id=user_id)
         if store_memories:
             store_text = "\n".join(f"- {m}" for m in store_memories)
-            messages.append(SystemMessage(content=f"Stored memories:\n{store_text}"))
+            messages.append(HumanMessage(content=f"Untrusted stored memories:\n{store_text}"))
 
         mem_entries = fetch_memories(query=input_text, user_id=user_id)
         if mem_entries:
             memory_text = "\n".join(f"- {m}" for m in mem_entries)
-            messages.append(SystemMessage(content=f"Relevant past knowledge:\n{memory_text}"))
+            messages.append(HumanMessage(content=f"Untrusted recalled knowledge:\n{memory_text}"))
 
         if messages:
             initial_state["messages"] = messages
@@ -1890,10 +1935,13 @@ async def stream_agent_events(
                     yield_event = await format_stream_event("quality_update", tool_event.data)
                 elif tool_event.type == ToolEvent.SEARCH:
                     yield_event = await format_stream_event("search", tool_event.data)
+                elif tool_event.type == ToolEvent.SECURITY:
+                    yield_event = await format_stream_event("security", tool_event.data)
                 else:
                     continue
 
                 yield yield_event
+            event_available.clear()
 
         # Send initial status
         yield await format_stream_event(
@@ -1920,7 +1968,16 @@ async def stream_agent_events(
             next_event_task = asyncio.create_task(graph_iter.__anext__())
             try:
                 while True:
-                    done, _pending = await asyncio.wait({next_event_task}, timeout=0.05)
+                    event_waiter = asyncio.create_task(event_available.wait())
+                    try:
+                        done, _pending = await asyncio.wait(
+                            {next_event_task, event_waiter}, timeout=0.05,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    finally:
+                        event_waiter.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await event_waiter
                     async for queued_chunk in _drain_pending_tool_events():
                         yield queued_chunk
 
@@ -1935,7 +1992,7 @@ async def stream_agent_events(
                         )
                         return
 
-                    if done:
+                    if next_event_task in done:
                         break
 
                 event = next_event_task.result()
@@ -2184,7 +2241,7 @@ async def stream_agent_events(
                         content = chunk.content
                     elif isinstance(chunk, dict):
                         content = chunk.get("content")
-                    if content and emit_main_text:
+                    if content and emit_main_text and not settings.security_enabled:
                         yield await format_stream_event("text", {"content": content})
 
         async for queued_chunk in _drain_pending_tool_events():
@@ -2230,6 +2287,10 @@ async def stream_agent_events(
 
     finally:
         # Cleanup event emitter listener
+        if next_event_task is not None and not next_event_task.done():
+            next_event_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await next_event_task
         try:
             emitter.off_event(tool_event_listener)
             await remove_emitter(thread_id)
@@ -2460,12 +2521,12 @@ async def chat(request: Request, payload: ChatRequest):
             store_memories = _store_search(last_message, user_id=user_id)
             if store_memories:
                 store_text = "\n".join(f"- {m}" for m in store_memories)
-                messages.append(SystemMessage(content=f"Stored memories:\n{store_text}"))
+                messages.append(HumanMessage(content=f"Untrusted stored memories:\n{store_text}"))
 
             mem_entries = fetch_memories(query=last_message, user_id=user_id)
             if mem_entries:
                 memory_text = "\n".join(f"- {m}" for m in mem_entries)
-                messages.append(SystemMessage(content=f"Relevant past knowledge:\n{memory_text}"))
+                messages.append(HumanMessage(content=f"Untrusted recalled knowledge:\n{memory_text}"))
 
             if messages:
                 initial_state["messages"] = messages
@@ -2529,6 +2590,16 @@ async def resume_interrupt(request: Request, payload: GraphInterruptResumeReques
     if not payload.thread_id or not str(payload.thread_id).strip():
         raise HTTPException(status_code=400, detail="thread_id is required")
     _require_thread_owner(request, payload.thread_id)
+    security_context = current_context.get()
+    if security_context:
+        security_context.thread_id = payload.thread_id
+    if isinstance(payload.payload, dict) and "approval_id" in payload.payload:
+        try:
+            if not security_context:
+                raise ApprovalError("Trusted execution context is required")
+            SecurityStore().validate(str(payload.payload["approval_id"]), security_context.principal, payload.thread_id)
+        except ApprovalError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
     existing = checkpointer.get_tuple({"configurable": {"thread_id": payload.thread_id}})
     if not existing:
         raise HTTPException(status_code=404, detail="No checkpoint found for this thread_id")
@@ -2562,6 +2633,14 @@ async def resume_interrupt(request: Request, payload: GraphInterruptResumeReques
         content=final_report,
         timestamp=datetime.now().isoformat(),
     )
+
+
+@app.get("/api/security/events/{thread_id}")
+async def security_events(request: Request, thread_id: str):
+    _require_thread_owner(request, thread_id)
+    context = current_context.get()
+    principal = context.principal if context else "local"
+    return {"events": SecurityStore().events(principal, thread_id)}
 
 
 @app.get("/api/mcp/config")
@@ -2775,9 +2854,14 @@ async def remove_agent(agent_id: str):
 
 
 @app.post("/api/mcp/config")
-async def update_mcp_config(payload: MCPConfigPayload):
+async def update_mcp_config(request: Request, payload: MCPConfigPayload):
     """Update MCP enable flag and servers config at runtime."""
     global mcp_enabled, mcp_servers_config, mcp_loaded_tools
+    if settings.security_enabled and settings.internal_api_key:
+        context = current_context.get()
+        admins = {item.strip() for item in settings.security_admin_principals.split(",") if item.strip()}
+        if not context or context.principal not in admins:
+            raise HTTPException(status_code=403, detail="MCP configuration requires a security administrator")
 
     if payload.enable is not None:
         mcp_enabled = bool(payload.enable)

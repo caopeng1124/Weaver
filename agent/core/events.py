@@ -35,9 +35,11 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Union
+
+from common.security.content import redact
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,7 @@ class ToolEventType(str, Enum):
     RESEARCH_TREE_UPDATE = "research_tree_update"  # Research tree structure updated
     SEARCH = "search"  # Search query executed with results
     QUALITY_UPDATE = "quality_update"  # Research quality/coverage metrics updated
+    SECURITY = "security"
 
     # System events
     ERROR = "error"  # General error
@@ -197,6 +200,7 @@ class EventEmitter:
         Returns:
             The emitted Event object
         """
+        data = redact(data)
         normalized_type = (
             event_type if isinstance(event_type, ToolEventType) else ToolEventType(event_type)
         )

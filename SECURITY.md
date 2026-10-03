@@ -1,5 +1,13 @@
 # Security Policy
 
+## Agent runtime controls
+
+Agent security is enabled by default. Tool authorization, single-use approvals,
+untrusted content inspection, and sensitive data redaction are described in
+[Agent security](docs/agent-security.md), including configuration, demonstrations,
+and limitations. These application controls do not replace an OS sandbox or a
+network egress firewall.
+
 ## Reporting a Vulnerability
 
 If you discover a security issue, please do **not** open a public GitHub issue.

@@ -828,6 +828,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/security/events/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Security Events */
+        get: operations["security_events_api_security_events__thread_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -2041,10 +2058,18 @@ export interface components {
             /** Tracing Enabled */
             tracing_enabled: boolean;
         };
+        /** PublicConfigModels */
+        PublicConfigModels: {
+            /** Default */
+            default: string;
+            /** Options */
+            options: string[];
+        };
         /** PublicConfigResponse */
         PublicConfigResponse: {
             defaults: components["schemas"]["PublicConfigDefaults"];
             features: components["schemas"]["PublicConfigFeatures"];
+            models: components["schemas"]["PublicConfigModels"];
             streaming: components["schemas"]["PublicConfigStreaming"];
             /** Version */
             version: string;
@@ -3689,6 +3714,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchProvidersResetResponse"];
+                };
+            };
+        };
+    };
+    security_events_api_security_events__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

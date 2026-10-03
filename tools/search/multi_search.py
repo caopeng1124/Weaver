@@ -19,6 +19,7 @@ import math
 import re
 import time
 from abc import ABC, abstractmethod
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -28,6 +29,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from agent.core.search_cache import get_search_cache
 from common.config import settings
+from common.security.boundaries import research_boundary
 from tools.search.reliability import ProviderReliabilityManager, ReliabilityPolicy
 
 logger = logging.getLogger(__name__)
@@ -182,6 +184,7 @@ class SearchProvider(ABC):
         self.stats = ProviderStats(name=name)
 
     @abstractmethod
+    @research_boundary()
     def search(self, query: str, max_results: int = 10) -> List[SearchResult]:
         """Execute a search query and return normalized results."""
         pass
@@ -210,6 +213,7 @@ class TavilyProvider(SearchProvider):
     def is_available(self) -> bool:
         return bool(self.api_key)
 
+    @research_boundary()
     def search(self, query: str, max_results: int = 10) -> List[SearchResult]:
         from tools.search.search import tavily_search
 
@@ -252,6 +256,7 @@ class DuckDuckGoProvider(SearchProvider):
     def is_available(self) -> bool:
         return importlib.util.find_spec("duckduckgo_search") is not None
 
+    @research_boundary()
     def search(self, query: str, max_results: int = 10) -> List[SearchResult]:
         try:
             from duckduckgo_search import DDGS
@@ -296,6 +301,7 @@ class BraveProvider(SearchProvider):
     def is_available(self) -> bool:
         return bool(self.api_key)
 
+    @research_boundary()
     def search(self, query: str, max_results: int = 10) -> List[SearchResult]:
         import requests
 
@@ -350,6 +356,7 @@ class SerperProvider(SearchProvider):
     def is_available(self) -> bool:
         return bool(self.api_key)
 
+    @research_boundary()
     def search(self, query: str, max_results: int = 10) -> List[SearchResult]:
         import requests
 
@@ -405,6 +412,7 @@ class ExaProvider(SearchProvider):
     def is_available(self) -> bool:
         return bool(self.api_key)
 
+    @research_boundary()
     def search(self, query: str, max_results: int = 10) -> List[SearchResult]:
         try:
             from exa_py import Exa
@@ -612,6 +620,7 @@ class MultiSearchOrchestrator:
         """Get list of currently healthy and available providers."""
         return [p for p in self.providers if p.is_available() and p.stats.is_healthy]
 
+    @research_boundary()
     def search(
         self,
         query: str,
@@ -733,6 +742,7 @@ class MultiSearchOrchestrator:
         )
         return providers
 
+    @research_boundary()
     def _call_provider(
         self,
         provider: SearchProvider,
@@ -790,7 +800,7 @@ class MultiSearchOrchestrator:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(self._call_provider, p, query, max_results): p
+                executor.submit(copy_context().run, self._call_provider, p, query, max_results): p
                 for p in providers
             }
 

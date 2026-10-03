@@ -89,6 +89,13 @@ class RAGTool:
                     "source": source,
                 }
 
+            # Sanitize before either the embedding API or the local vector store sees content.
+            from common.security.content import redact
+            from common.security.runtime import untrusted
+            for document in documents:
+                document.content = untrusted(document.content, source=str(filename or file_path or "uploaded_document"))
+                document.metadata = redact(document.metadata)
+
             # Generate embeddings
             texts = [doc.content for doc in documents]
             embeddings = self.embedder.embed_documents(texts)
@@ -229,7 +236,21 @@ def rag_search(query: str, n_results: int = 5) -> str:
     Returns:
         Relevant excerpts from local documents with source information
     """
-    rag = get_rag_tool()
+    import hashlib
+
+    from common.config import settings
+    from common.security.context import current_context
+    from common.security.runtime import untrusted
+
+    collection_name = None
+    if settings.internal_api_key:
+        context = current_context.get()
+        if not context:
+            return "[SECURITY_BLOCKED] RAG retrieval requires a trusted user identity"
+        base = (settings.rag_collection_name or "weaver_documents").strip()
+        suffix = hashlib.sha256(context.principal.encode()).hexdigest()[:12]
+        collection_name = f"{base}__u_{suffix}"
+    rag = get_rag_tool(collection_name=collection_name)
     if rag is None:
         return "RAG search is not enabled. Please enable it in settings."
 
@@ -245,4 +266,4 @@ def rag_search(query: str, n_results: int = 5) -> str:
             f"{r['content'][:500]}..."
         )
 
-    return "\n\n---\n\n".join(output_parts)
+    return untrusted("\n\n---\n\n".join(output_parts), source="rag_retrieval")

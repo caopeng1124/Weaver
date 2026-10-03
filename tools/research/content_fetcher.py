@@ -4,6 +4,7 @@ import html
 import ipaddress
 import re
 import threading
+from contextvars import copy_context
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlsplit
@@ -12,6 +13,8 @@ import requests
 
 from agent.workflows.source_registry import SourceRegistry
 from common.config import settings
+from common.security.boundaries import protect_result
+from common.security.runtime import SecurityViolation, check_outbound
 from tools.research.models import FetchedPage, truncate_bytes
 from tools.research.page_cache import get_fetched_page_cache
 from tools.research.reader_client import ReaderClient
@@ -312,6 +315,13 @@ class ContentFetcher:
         )
 
     def fetch(self, url: str) -> FetchedPage:
+        try:
+            check_outbound("crawl_url", {"url": url})
+        except SecurityViolation:
+            return FetchedPage(url=url, raw_url=url, method="direct_http", error="blocked fetch target url")
+        return protect_result(self._fetch(url), str(url))
+
+    def _fetch(self, url: str) -> FetchedPage:
         raw_url = (url or "").strip()
         canonical_url = self._registry.canonicalize_url(raw_url)
         if not canonical_url:
@@ -350,6 +360,7 @@ class ContentFetcher:
         )
 
         def _maybe_cache(page: FetchedPage) -> None:
+            page = protect_result(page, canonical_url)
             if cache is None or not cache_key:
                 return
             store_errors = bool(getattr(settings, "research_fetch_cache_store_errors", False))
@@ -449,7 +460,7 @@ class ContentFetcher:
             from concurrent.futures import ThreadPoolExecutor
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                return list(executor.map(self.fetch, candidates))
+                return [future.result() for future in [executor.submit(copy_context().run, self.fetch, url) for url in candidates]]
 
         sem_lock = threading.RLock()
         semaphores: dict[str, threading.Semaphore] = {}
@@ -474,4 +485,4 @@ class ContentFetcher:
         from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return list(executor.map(_fetch_with_domain_limit, candidates))
+            return [future.result() for future in [executor.submit(copy_context().run, _fetch_with_domain_limit, url) for url in candidates]]

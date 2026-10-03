@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from common.config import settings
+from common.security.logging import RedactingFormatter
 
 
 class JSONFormatter(logging.Formatter):
@@ -73,6 +74,8 @@ def setup_logging():
     else:
         formatter = logging.Formatter(settings.log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
+    formatter = RedactingFormatter(formatter)
+
     # Console handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
@@ -108,7 +111,7 @@ def setup_logging():
     logger = logging.getLogger(__name__)
     logger.info("=" * 80)
     logger.info(f"Logging initialized - Level: {log_level_str}")
-    logger.info(f"Console logging: Enabled")
+    logger.info("Console logging: Enabled")
     logger.info(f"File logging: {'Enabled' if settings.enable_file_logging else 'Disabled'}")
     if settings.enable_file_logging:
         logger.info(f"Log file: {settings.log_file}")

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from common.config import settings
+from common.security.boundaries import research_boundary
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ def _safe_json(resp: requests.Response) -> Any:
         return None
 
 
+@research_boundary()
 def serper_search(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     api_key = (getattr(settings, "serper_api_key", "") or "").strip()
     if not _is_valid_api_key(api_key):
@@ -108,6 +110,7 @@ def serper_search(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     return results[: int(max_results or 10)]
 
 
+@research_boundary()
 def serpapi_search(
     query: str, max_results: int = 10, *, engine: str = "google"
 ) -> List[Dict[str, Any]]:
@@ -169,6 +172,7 @@ def serpapi_search(
     return results[: int(max_results or 10)]
 
 
+@research_boundary()
 def bing_search(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     api_key = (getattr(settings, "bing_api_key", "") or "").strip()
     if not _is_valid_api_key(api_key):
@@ -211,6 +215,7 @@ def bing_search(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     return results[: int(max_results or 10)]
 
 
+@research_boundary()
 def google_cse_search(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     api_key = (getattr(settings, "google_search_api_key", "") or "").strip()
     search_engine_id = (getattr(settings, "google_search_engine_id", "") or "").strip()
@@ -263,6 +268,7 @@ def google_cse_search(query: str, max_results: int = 10) -> List[Dict[str, Any]]
     return results[: int(max_results or 10)]
 
 
+@research_boundary()
 def exa_search(
     query: str,
     max_results: int = 10,
@@ -333,6 +339,7 @@ def exa_search(
     return results[: int(max_results or 10)]
 
 
+@research_boundary()
 def firecrawl_search(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     api_key = (getattr(settings, "firecrawl_api_key", "") or "").strip()
     if not _is_valid_api_key(api_key):

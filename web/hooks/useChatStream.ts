@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import { Message, Artifact, ToolInvocation, ImageAttachment, ProcessEvent, RunMetrics, MessageSource } from '@/types/chat'
 import { getApiBaseUrl } from '@/lib/api'
 import { createLegacyChatStreamState, consumeLegacyChatStreamChunk } from '@/lib/chatStreamProtocol'
+import { ApprovalDecision, buildApprovalPayload } from '@/lib/securityApproval'
 
 interface UseChatStreamProps {
   selectedModel: string
@@ -194,6 +195,9 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
               },
             ])
             break
+          } else if (data.type === 'security') {
+            pushProcessEvent('security', data.data)
+            syncAssistantMessage()
           } else if (data.type === 'tool') {
             const toolCallId =
               data.data.toolCallId || `tool-${Date.now()}-${Math.random()}`
@@ -366,12 +370,12 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
     }
   }, [selectedModel, searchMode])
 
-  const handleApproveInterrupt = useCallback(async () => {
+  const handleApproveInterrupt = useCallback(async (decision: ApprovalDecision = 'approve', editedJson?: string) => {
     if (!pendingInterrupt || !threadId) return
     setIsLoading(true)
     setCurrentStatus('Resuming after approval...')
     try {
-      const toolCalls = pendingInterrupt?.prompts?.[0]?.tool_calls
+      const approvalPayload = buildApprovalPayload(pendingInterrupt, decision, editedJson)
       const res = await fetch(
         `${getApiBaseUrl()}/api/interrupt/resume`,
         {
@@ -379,14 +383,19 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             thread_id: threadId,
-            payload: { tool_approved: true, tool_calls: toolCalls },
+            payload: approvalPayload,
             model: selectedModel,
             search_mode: searchMode
           })
         }
       )
-      if (!res.ok) throw new Error('Failed to resume')
+      if (!res.ok) throw new Error('审批未能完成，操作可能已过期或被策略拒绝。')
       const data = await res.json()
+      if (data.status === 'interrupted') {
+        setPendingInterrupt({ thread_id: threadId, prompts: data.interrupts })
+        return
+      }
+      setPendingInterrupt(null)
       setMessages(prev => [
         ...prev,
         {
@@ -402,11 +411,10 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
         {
           id: `error-${Date.now()}`,
           role: 'assistant',
-          content: 'Resume failed. Please retry.',
+          content: err instanceof Error ? err.message : '审批失败，请重试。',
         }
       ])
     } finally {
-      setPendingInterrupt(null)
       setIsLoading(false)
       setCurrentStatus('')
     }

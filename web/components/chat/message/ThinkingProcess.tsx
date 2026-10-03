@@ -14,6 +14,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { securityLabel } from '@/lib/securityApproval'
 import { ProcessEvent, RunMetrics, ToolInvocation } from '@/types/chat'
 
 interface ThinkingProcessProps {
@@ -267,6 +268,14 @@ function EventRow({ ev }: { ev: ProcessEvent }) {
         </div>
       </div>
     )
+  }
+
+  if (kind === 'security') {
+    return <div className="rounded border border-amber-300/50 bg-amber-50/50 p-2 text-sm dark:bg-amber-950/30">
+      <div className="font-medium">安全检查 · {securityLabel(ev.data?.event) || '检查完成'}</div>
+      <div className="break-all text-xs text-muted-foreground">{[ev.data?.tool, ev.data?.source, securityLabel(ev.data?.reason), securityLabel(ev.data?.action)].filter(Boolean).join(' · ')}</div>
+      {ev.data?.rules?.length ? <div className="text-xs">{ev.data.rules.map(securityLabel).join(' / ')}</div> : null}
+    </div>
   }
 
   if (kind === 'quality_update') {

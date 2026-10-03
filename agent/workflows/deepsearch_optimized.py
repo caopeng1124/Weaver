@@ -21,13 +21,13 @@ import logging
 import re
 import time
 import traceback
+from contextvars import copy_context
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 
 from agent.core.llm_factory import create_chat_model
 from agent.core.search_cache import get_search_cache
@@ -45,6 +45,7 @@ from agent.workflows.research_tree import TreeExplorationBudgetExceeded, TreeExp
 from agent.workflows.source_url_utils import canonicalize_source_url, compact_unique_sources
 from common.cancellation import check_cancellation as _check_cancel_token
 from common.config import settings
+from common.security.models import ChatOpenAI
 from prompts.templates.deepsearch import (
     final_summary_prompt,
     formulate_query_prompt,
@@ -1202,7 +1203,9 @@ def run_deepsearch_optimized(state: Dict[str, Any], config: Dict[str, Any]) -> D
                     # This is best-effort UX only; failures must not break research.
                     if visualize_browser:
                         try:
-                            from agent.workflows.browser_visualizer import visualize_urls_from_results
+                            from agent.workflows.browser_visualizer import (
+                                visualize_urls_from_results,
+                            )
 
                             visualize_urls_from_results(
                                 state=state,
@@ -1862,6 +1865,7 @@ def run_deepsearch_tree(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[s
 
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(
+                            copy_context().run,
                             lambda: asyncio.run(explorer.run_async(topic, state, decompose_root=True))
                         )
                         tree = future.result()

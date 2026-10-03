@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
 from common.config import settings
+from common.security.gateway import secure_tools
 from tools import execute_python_code, tavily_search
 from tools.automation.ask_human_tool import ask_human
 from tools.automation.bash_tool import safe_bash
@@ -243,7 +244,7 @@ def build_agent_tools(config: RunnableConfig) -> List[BaseTool]:
     for t in tools:
         if hasattr(t, "thread_id"):
             try:
-                setattr(t, "thread_id", thread_id)
+                t.thread_id = thread_id
             except Exception:
                 pass
 
@@ -274,4 +275,4 @@ def build_agent_tools(config: RunnableConfig) -> List[BaseTool]:
     if emit_events:
         tool_list = wrap_tools_with_events(tool_list, thread_id=thread_id)
 
-    return tool_list
+    return secure_tools(tool_list)

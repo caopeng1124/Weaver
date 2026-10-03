@@ -15,14 +15,15 @@ import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.language_models import BaseChatModel
-from langchain_openai import AzureChatOpenAI, ChatOpenAI
+
+from common.security.models import AzureChatOpenAI, ChatOpenAI
 
 # Optional import for Anthropic
 try:
-    from langchain_anthropic import ChatAnthropic
+    from common.security.anthropic import ChatAnthropic
     ANTHROPIC_AVAILABLE = True
 except ImportError:
     ChatAnthropic = None  # type: ignore

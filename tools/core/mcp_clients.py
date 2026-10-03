@@ -9,9 +9,8 @@ Evented MCP multi-server client (SSE + stdio).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from langchain.tools import BaseTool
 
@@ -39,43 +38,47 @@ class MCPClientTool(BaseTool):
     server_id: str = ""
     original_name: str = ""
     thread_id: str = "default"
+    server_fingerprint: str = ""
+    owner_loop: Any = None
 
     def _run(self, **kwargs):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            return "Error: use asynchronous MCP execution on the server event loop"
+        if self.owner_loop and self.owner_loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(self._arun(**kwargs), self.owner_loop)
+            try:
+                return future.result(timeout=60)
+            except TimeoutError:
+                future.cancel()
+                return "Error: MCP execution timed out"
+        return asyncio.run(self._arun(**kwargs))
+
+    async def _arun(self, **kwargs):
+        from common.security.content import enabled
+        from common.security.context import active_call
+        from common.security.policy import digest
+        from common.security.runtime import untrusted
         if not self.session:
             return f"Error: not connected to MCP server {self.server_id}"
+        if self.owner_loop and asyncio.get_running_loop() is not self.owner_loop:
+            future = asyncio.run_coroutine_threadsafe(self._arun(**kwargs), self.owner_loop)
+            return await asyncio.wrap_future(future)
+        permit = active_call.get()
+        expected = digest({"tool": self.name, "args": kwargs})
+        if enabled() and (permit is None or not permit.consume(expected)):
+            return "[SECURITY_BLOCKED] MCP calls require permission for these exact arguments"
         emitter = get_emitter_sync(self.thread_id)
-        emitter.emit_sync(
-            ToolEventType.TOOL_START, {"tool": self.name, "args": kwargs, "server": self.server_id}
-        )
-        try:
-            result = asyncio.get_event_loop().run_until_complete(
-                self.session.call_tool(self.original_name, kwargs)
-            )
-            content_items = getattr(result, "content", None) or []
-            parts: List[str] = []
-            for item in content_items:
-                text = getattr(item, "text", None)
-                if isinstance(text, str) and text:
-                    parts.append(text)
-                else:
-                    parts.append(str(item))
-            content = ", ".join([p for p in parts if p])
-            emitter.emit_sync(
-                ToolEventType.TOOL_RESULT,
-                {
-                    "tool": self.name,
-                    "result": content or "No output",
-                    "server": self.server_id,
-                    "success": True,
-                },
-            )
-            return content or "No output"
-        except Exception as e:
-            emitter.emit_sync(
-                ToolEventType.TOOL_ERROR,
-                {"tool": self.name, "error": str(e), "server": self.server_id},
-            )
-            return f"Error executing MCP tool: {e}"
+        await emitter.emit(ToolEventType.TOOL_START, {"tool": self.name, "args": kwargs, "server": self.server_id})
+        result = await asyncio.wait_for(self.session.call_tool(self.original_name, kwargs), timeout=60)
+        parts = [getattr(item, "text", "") for item in (getattr(result, "content", None) or [])]
+        content = untrusted("\n".join(part for part in parts if isinstance(part, str)) or "No text output", source=f"mcp:{self.server_id}")
+        await emitter.emit(ToolEventType.TOOL_RESULT, {"tool": self.name, "result": content,
+                           "server": self.server_id, "success": not bool(getattr(result, "isError", False))})
+        return content
 
 
 class MCPClients:
@@ -86,11 +89,14 @@ class MCPClients:
         self.exit_stacks: Dict[str, asyncio.AbstractEventLoop] = {}
         self.tools: List[BaseTool] = []
         self.thread_id = thread_id
+        self.server_fingerprints: Dict[str, str] = {}
 
     async def connect_sse(self, server_url: str, server_id: str = "") -> None:
         if sse_client is None or ClientSession is None:
             raise RuntimeError("Missing dependency: mcp. Install with `pip install mcp`.")
         server_id = server_id or server_url
+        from common.security.policy import digest
+        self.server_fingerprints[server_id] = digest({"transport": "sse", "url": server_url})
         if server_id in self.sessions:
             await self.disconnect(server_id)
 
@@ -106,6 +112,8 @@ class MCPClients:
         if stdio_client is None or ClientSession is None or StdioServerParameters is None:
             raise RuntimeError("Missing dependency: mcp. Install with `pip install mcp`.")
         server_id = server_id or command
+        from common.security.policy import digest
+        self.server_fingerprints[server_id] = digest({"transport": "stdio", "command": command, "args": args})
         if server_id in self.sessions:
             await self.disconnect(server_id)
 
@@ -133,12 +141,14 @@ class MCPClients:
             proxy = MCPClientTool(
                 name=tool_name,
                 description=tool.description,
-                parameters=tool.inputSchema,
+                args_schema=tool.inputSchema,
             )
             proxy.session = self.sessions.get(server_id)
             proxy.server_id = server_id
             proxy.original_name = original_name
             proxy.thread_id = self.thread_id
+            proxy.server_fingerprint = self.server_fingerprints.get(server_id, "")
+            proxy.owner_loop = asyncio.get_running_loop()
             self.tools.append(proxy)
         logger.info(f"[mcp] registered {len(tools_result.tools)} tools from {server_id}")
 

@@ -15,10 +15,12 @@ from langchain.agents.middleware import (
     ToolRetryMiddleware,
 )
 from langchain_core.tools import BaseTool
-from langchain_openai import ChatOpenAI
 
-from common.config import settings
 from agent.workflows.provider_safe_middleware import ProviderSafeToolSelectorMiddleware
+from common.config import settings
+from common.security.gateway import secure_tools
+from common.security.middleware import SecurityMiddleware
+from common.security.models import ChatOpenAI
 from tools.code.code_executor import execute_python_code
 from tools.core.registry import get_registered_tools
 
@@ -84,7 +86,7 @@ def _build_todo_middleware() -> TodoListMiddleware:
 
 
 def _build_middlewares() -> List:
-    mws: List = []
+    mws: List = [SecurityMiddleware()] if settings.security_enabled else []
 
     # Tool selector
     if settings.tool_selector:
@@ -147,7 +149,7 @@ def _build_middlewares() -> List:
         mws.append(_build_todo_middleware())
 
     # Human-in-the-loop for risky tools
-    if settings.tool_approval:
+    if settings.tool_approval and not settings.security_enabled:
         # Apply to high-impact tools by default.
         interrupt_cfg = {
             "execute_python_code": True,
@@ -185,6 +187,7 @@ def build_writer_agent(model: str | None = None) -> tuple[object, List[BaseTool]
     model_name = (model or settings.primary_model).strip()
     tools: List[BaseTool] = [execute_python_code]
     tools.extend(get_registered_tools())
+    tools = secure_tools(tools)
 
     agent = create_agent(
         _build_llm(model_name, temperature=0.7),
@@ -201,6 +204,6 @@ def build_tool_agent(*, model: str, tools: List[BaseTool], temperature: float = 
     model_name = (model or settings.primary_model).strip()
     return create_agent(
         _build_llm(model_name, temperature=temperature),
-        tools,
+        secure_tools(tools),
         middleware=_build_middlewares(),
     )

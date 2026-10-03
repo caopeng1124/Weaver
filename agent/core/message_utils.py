@@ -2,8 +2,7 @@ import logging
 import textwrap
 from typing import List
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_openai import ChatOpenAI
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from agent.core.llm_factory import create_summary_model
 from common.config import settings

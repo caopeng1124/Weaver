@@ -17,18 +17,17 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from common.config import settings
+from common.security.models import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 

@@ -5,9 +5,11 @@ from typing import Any, Dict, List, Optional
 
 from langchain.tools import tool
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 
 from common.config import settings
+from common.security.boundaries import research_boundary
+from common.security.models import ChatOpenAI
+from common.security.runtime import untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,7 @@ def _summarize_content(raw_content: str) -> Optional[str]:
 
 
 @tool
+@research_boundary()
 def tavily_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     """
     Perform a deep search using Tavily API.
@@ -93,7 +96,7 @@ def tavily_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     try:
         try:
             from tavily import TavilyClient  # type: ignore
-        except Exception as e:
+        except Exception:
             logger.error(
                 "Missing dependency: tavily-python. Install with `pip install tavily-python`."
             )
@@ -123,6 +126,7 @@ def tavily_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         )
 
         for result in sorted_results:
+            result = untrusted(result, source=str(result.get("url") or "tavily"))
             url = result.get("url", "")
             if not url or url in seen_urls:
                 continue

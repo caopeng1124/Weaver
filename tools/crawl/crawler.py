@@ -22,11 +22,13 @@ Usage:
 import asyncio
 import logging
 import re
+from contextvars import copy_context
 from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from common.config import settings
+from common.security.boundaries import research_boundary
 
 # 环境变量控制是否无头模式（默认 true 无窗口；false 可视化调试）
 _CRAWLER_HEADLESS = str(getattr(settings, "crawler_headless", "") or "").strip().lower()
@@ -141,6 +143,7 @@ class CrawlerOptimized:
 
         logger.info("[crawler] Browser closed")
 
+    @research_boundary()
     async def crawl_single_url(self, url: str) -> Dict[str, Any]:
         """
         Crawl a single URL and extract text content.
@@ -191,6 +194,7 @@ class CrawlerOptimized:
             if page:
                 await page.close()
 
+    @research_boundary()
     async def crawl_urls(self, urls: List[str]) -> List[Dict[str, Any]]:
         """
         Crawl multiple URLs in parallel.
@@ -302,6 +306,7 @@ def _strip_html(html: str) -> str:
     return text.strip()
 
 
+@research_boundary()
 def _crawl_url_legacy(url: str, timeout: int = 10) -> Dict[str, str]:
     """
     Fetch a single URL using urllib (legacy implementation).
@@ -363,6 +368,7 @@ def _should_use_optimized() -> bool:
     return getattr(settings, "use_optimized_crawler", True)
 
 
+@research_boundary()
 def crawl_urls(urls: List[str], timeout: int = 10) -> List[Dict[str, str]]:
     """
     Intelligent crawler that automatically selects best implementation.
@@ -428,7 +434,7 @@ def _run_async_crawl(urls: List[str]) -> List[Dict[str, str]]:
         import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(_run_new_loop, urls)
+            future = executor.submit(copy_context().run, _run_new_loop, urls)
             return future.result()
 
     return _run_new_loop(urls)
