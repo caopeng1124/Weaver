@@ -3,17 +3,18 @@ Customer Support Agent with Mem0 memory.
 
 Provides a simple LangGraph that:
 - Retrieves relevant memories for the user
-- Adds a system prompt with context
+- Builds application instructions separately from recalled context
 - Stores the interaction back to memory
 """
 
 import json
 from typing import Annotated, List, TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
+from agent.core.context_builder import ContextBlock, build_context
 from common.config import settings
 from common.security.models import ChatOpenAI
 from tools.core.memory_client import fetch_memories, store_interaction
@@ -58,25 +59,26 @@ def support_node(state: SupportState):
     messages = state["messages"]
     user_id = state.get("user_id") or settings.memory_user_id
     last_user_message = ""
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage):
+    task_index = None
+    for index in range(len(messages) - 1, -1, -1):
+        msg = messages[index]
+        if isinstance(msg, HumanMessage) and msg.name not in {"context_data", "agent_preferences"}:
             last_user_message = msg.content
+            task_index = index
             break
 
     # Retrieve memories
     mem_entries = fetch_memories(query=last_user_message, user_id=user_id)
-    context = ""
-    if mem_entries:
-        context = "Relevant information from previous conversations:\n" + "\n".join(
-            f"- {m}" for m in mem_entries
-        )
-
-    system_prompt = "You are a helpful customer support assistant. Use provided context to personalize and remember user preferences."
-    if context:
-        system_prompt += f"\n{context}"
-
     llm = _support_model()
-    response = llm.invoke([SystemMessage(content=system_prompt)] + messages)
+    history = [msg for index, msg in enumerate(messages) if index != task_index]
+    response = llm.invoke(
+        build_context(
+            "support",
+            history=history,
+            user=last_user_message,
+            data=[ContextBlock("recalled_memory", mem_entries)] if mem_entries else [],
+        )
+    )
     reply_text = response.content if hasattr(response, "content") else str(response)
 
     # Store interaction

@@ -11,6 +11,8 @@ from langchain.agents.middleware.tool_selection import (
 )
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 
+from agent.core.context_builder import ContextBlock, build_context
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -51,18 +53,12 @@ class ProviderSafeToolSelectorMiddleware(LLMToolSelectorMiddleware):
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
     def _selection_messages(self, request: Any, *, method: str) -> list[Any]:
-        system_message = request.system_message
-        if method == "json_mode":
-            system_message += (
-                "\nReturn only a JSON object with the shape "
-                '{"tools":["tool_name_1","tool_name_2"]}. '
-                "Do not include markdown or prose.\n"
-                f"Available tools:\n{_render_tool_list(request.available_tools)}"
-            )
-        return [
-            {"role": "system", "content": system_message},
-            request.last_user_message,
-        ]
+        return build_context(
+            "tool_selector",
+            user=request.last_user_message.content,
+            data=[ContextBlock("available_tools", _render_tool_list(request.available_tools))],
+            max_items=self.max_tools,
+        )
 
     def _select_tools_once(
         self,

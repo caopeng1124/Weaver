@@ -4,8 +4,8 @@ import textwrap
 from typing import Any, Dict, List, Optional
 
 from langchain.tools import tool
-from langchain_core.prompts import ChatPromptTemplate
 
+from agent.core.context_builder import ContextBlock, build_context
 from common.config import settings
 from common.security.boundaries import research_boundary
 from common.security.models import ChatOpenAI
@@ -62,17 +62,11 @@ def _summarize_content(raw_content: str) -> Optional[str]:
             params["extra_body"] = merged_extra
 
         llm = ChatOpenAI(**params)
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are a concise analyst. Summarize the page into 3-5 bullet points. "
-                    "Keep key facts, avoid filler, cite numbers if present.",
-                ),
-                ("human", "{content}"),
-            ]
+        response = llm.invoke(
+            build_context(
+                "search_summary", data=[ContextBlock("web_page", _trim_text(raw_content, 3500))]
+            )
         )
-        response = llm.invoke(prompt.format_messages(content=_trim_text(raw_content, 3500)))
         content = getattr(response, "content", None) or ""
         return textwrap.dedent(content).strip() or None
     except Exception as e:
@@ -133,7 +127,9 @@ def tavily_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
             seen_urls.add(url)
 
             raw_content = result.get("raw_content", "") or result.get("content", "")
-            summary = _summarize_content(raw_content) if len(results) < _SUMMARY_TOP_RESULTS else None
+            summary = (
+                _summarize_content(raw_content) if len(results) < _SUMMARY_TOP_RESULTS else None
+            )
 
             results.append(
                 {

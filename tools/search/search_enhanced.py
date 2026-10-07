@@ -17,9 +17,9 @@ import logging
 import textwrap
 from typing import Any, Dict, List, Optional
 
-from langchain_core.prompts import ChatPromptTemplate
 from tavily import TavilyClient
 
+from agent.core.context_builder import ContextBlock, build_context
 from common.config import settings
 from common.security.models import ChatOpenAI
 from tools.core.base import ToolResult, WeaverTool, tool_schema
@@ -96,18 +96,11 @@ class TavilySearchTool(WeaverTool):
                 params["extra_body"] = merged_extra
 
             llm = ChatOpenAI(**params)
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "You are a concise analyst. Summarize the page into 3-5 bullet points. "
-                        "Keep key facts, avoid filler, cite numbers if present.",
-                    ),
-                    ("human", "{content}"),
-                ]
-            )
             response = llm.invoke(
-                prompt.format_messages(content=self._trim_text(raw_content, 3500))
+                build_context(
+                    "search_summary",
+                    data=[ContextBlock("web_page", self._trim_text(raw_content, 3500))],
+                )
             )
             content = getattr(response, "content", None) or ""
             return textwrap.dedent(content).strip() or None

@@ -1,13 +1,6 @@
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 from langchain_core.messages import AIMessage, SystemMessage
-
-# Ensure project root is on sys.path for direct test execution
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from agent.workflows import nodes
 
@@ -49,7 +42,11 @@ def test_agent_node_delegates_narrow_comparison_query_to_fast_search(monkeypatch
         return {
             "draft_report": "Paris is the capital of France, and Berlin is the capital of Germany.",
             "final_report": "Paris is the capital of France, and Berlin is the capital of Germany.",
-            "messages": [AIMessage(content="Paris is the capital of France, and Berlin is the capital of Germany.")],
+            "messages": [
+                AIMessage(
+                    content="Paris is the capital of France, and Berlin is the capital of Germany."
+                )
+            ],
             "is_complete": False,
         }
 
@@ -94,7 +91,7 @@ def test_agent_node_keeps_full_tool_agent_for_complex_research_queries(monkeypat
     assert result["final_report"] == "Structured comparison"
 
 
-def test_fast_agent_path_preserves_seeded_system_messages(monkeypatch):
+def test_fast_agent_path_demotes_seeded_system_messages(monkeypatch):
     captured = {}
 
     class FakeLLM:
@@ -107,7 +104,13 @@ def test_fast_agent_path_preserves_seeded_system_messages(monkeypatch):
         "_run_fast_agent_search",
         lambda _query, _config: (
             "tavily_search",
-            [{"title": "France", "url": "https://example.com/fr", "snippet": "Paris is the capital of France."}],
+            [
+                {
+                    "title": "France",
+                    "url": "https://example.com/fr",
+                    "snippet": "Paris is the capital of France.",
+                }
+            ],
         ),
         raising=False,
     )
@@ -126,6 +129,11 @@ def test_fast_agent_path_preserves_seeded_system_messages(monkeypatch):
     )
 
     assert result["final_report"] == "Paris"
-    system_contents = [msg.content for msg in captured["messages"] if isinstance(msg, SystemMessage)]
-    assert "Custom agent instruction" in system_contents
-    assert "Relevant past knowledge:\n- France is a country in Europe" in system_contents
+    system_contents = [
+        msg.content for msg in captured["messages"] if isinstance(msg, SystemMessage)
+    ]
+    assert all("Custom agent instruction" not in content for content in system_contents)
+    assert all("Relevant past knowledge" not in content for content in system_contents)
+    data_contents = [msg.content for msg in captured["messages"] if msg.type == "human"]
+    assert any("Custom agent instruction" in content for content in data_contents)
+    assert any("Relevant past knowledge" in content for content in data_contents)

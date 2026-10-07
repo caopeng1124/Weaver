@@ -1,9 +1,9 @@
 import logging
-import textwrap
 from typing import List
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
+from agent.core.context_builder import ContextBlock, build_context, data_message
 from agent.core.llm_factory import create_summary_model
 from common.config import settings
 
@@ -26,28 +26,23 @@ def _messages_to_text(messages: List[BaseMessage]) -> str:
     return "\n".join(lines)
 
 
-def summarize_messages(messages: List[BaseMessage]) -> SystemMessage:
-    """Summarize middle conversation history into a compact system message."""
+def summarize_messages(messages: List[BaseMessage]) -> HumanMessage:
+    """Summarize history as untrusted data, retaining that status on fallback."""
     if not messages:
-        return SystemMessage(content="Conversation summary: (empty)")
+        return data_message("Conversation summary: (empty)", source="conversation_summary")
 
     llm = _chat_model_summary()
     word_limit = int(settings.summary_messages_word_limit or 200)
-    prompt = textwrap.dedent(
-        f"""You are a concise summarizer.
-Keep critical facts, names, numbers, decisions, and user intent.
-Do NOT add new info. Respond in <= {word_limit} words.
-
-Conversation:
-{{conversation}}
-"""
-    )
     convo_text = _messages_to_text(messages)
     try:
-        resp = llm.invoke([HumanMessage(content=prompt.format(conversation=convo_text))])
+        resp = llm.invoke(
+            build_context(
+                "summary", data=[ContextBlock("conversation", convo_text)], max_items=word_limit
+            )
+        )
         content = getattr(resp, "content", "") or convo_text[:500]
     except Exception as e:
         logger.warning(f"Summarization failed, falling back to truncation: {e}")
         content = convo_text[:500]
 
-    return SystemMessage(content=f"Conversation summary:\\n{content.strip()}")
+    return data_message(content.strip(), source="conversation_summary")

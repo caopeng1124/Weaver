@@ -3,9 +3,9 @@ from typing import List
 
 from langchain.tools import tool
 
+from agent.core.context_builder import build_context
 from common.config import settings
 from common.security.models import ChatOpenAI
-from prompts.planning import PLANNING_SYSTEM_PROMPT
 
 
 @tool
@@ -39,13 +39,9 @@ def plan_steps(goal: str, max_steps: int = 5) -> List[str]:
             pass
 
     llm = ChatOpenAI(**params)
-    messages = [
-        {"role": "system", "content": PLANNING_SYSTEM_PROMPT.strip()},
-        {
-            "role": "user",
-            "content": f"Goal: {goal}\nReturn up to {max_steps} steps as a numbered list.",
-        },
-    ]
+    messages = build_context(
+        "planning_tool", user=f"Goal: {goal}\nReturn up to {max_steps} steps as a numbered list."
+    )
     resp = llm.invoke(messages)
     content = getattr(resp, "content", "") or ""
     steps: List[str] = []

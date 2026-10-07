@@ -10,10 +10,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 
+from agent.core.context_builder import ContextBlock, build_context
 from common.config import settings
 from common.security.models import ChatOpenAI
 
@@ -39,62 +39,6 @@ class RouteDecision(BaseModel):
     clarification_question: str = Field(
         default="", description="For 'clarify' route, the question to ask the user"
     )
-
-
-ROUTER_SYSTEM_PROMPT = """You are an intelligent query router. Analyze the user's query and determine the best execution path.
-
-## Route Types:
-
-1. **direct** - Simple questions that can be answered from knowledge
-   - Factual questions with clear answers
-   - Simple calculations or conversions
-   - Common knowledge questions
-   - Examples: "What is the capital of France?", "Convert 100 USD to EUR", "What is 2+2?"
-
-2. **agent** - Tasks requiring tool usage or multi-step actions
-   - Code execution or analysis
-   - File operations
-   - Browser automation
-   - API calls or external tool usage
-   - Multi-step workflows
-   - Examples: "Write a Python script that...", "Browse to example.com and...", "Create a file with..."
-
-3. **web** - Quick web search for current information
-   - Recent events or news
-   - Current prices, weather, or data
-   - Simple lookup queries
-   - Examples: "What's the weather in NYC?", "Latest news about...", "Current stock price of..."
-
-4. **deep** - Comprehensive research requiring multiple searches
-   - Complex research questions
-   - Comparative analysis
-   - In-depth topic exploration
-   - Multi-faceted queries
-   - Examples: "Compare the AI strategies of...", "Analyze the market trends...", "Research the pros and cons of..."
-
-5. **clarify** - Ambiguous queries needing clarification
-   - Unclear or incomplete requests
-   - Multiple possible interpretations
-   - Missing key information
-   - Examples: "Help me with this", "Fix the bug", "Make it better"
-
-## Decision Guidelines:
-
-- Default to 'direct' for simple queries
-- Use 'agent' when tools are explicitly or implicitly needed
-- Use 'web' for time-sensitive or current information
-- Use 'deep' for research-heavy queries requiring synthesis
-- Use 'clarify' only when truly ambiguous
-
-## Response Format:
-
-Provide your decision as a JSON object with:
-- route: one of "direct", "agent", "web", "deep", "clarify"
-- reasoning: brief explanation
-- confidence: 0.0 to 1.0
-- suggested_queries: for web/deep routes, 2-3 search queries
-- clarification_question: for clarify route, the question to ask
-"""
 
 
 class SmartRouter:
@@ -165,17 +109,16 @@ class SmartRouter:
         try:
             llm = self._get_llm()
 
-            # Build messages
-            messages = [SystemMessage(content=ROUTER_SYSTEM_PROMPT)]
-
             # Build user content
             user_content = query
-            if context:
-                user_content = f"Context: {context}\n\nQuery: {query}"
             if images:
                 user_content += f"\n\n[User has attached {len(images)} image(s)]"
 
-            messages.append(HumanMessage(content=user_content))
+            messages = build_context(
+                "router",
+                user=user_content,
+                data=[ContextBlock("routing_context", context)] if context else [],
+            )
 
             # Get structured output
             response = llm.with_structured_output(RouteDecision).invoke(

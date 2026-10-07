@@ -22,10 +22,10 @@ import logging
 import time
 from typing import Any, Dict, List, Literal
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from agent.core.context_builder import build_context
 from common.config import settings
 from common.security.models import ChatOpenAI
 
@@ -61,45 +61,6 @@ class PresentationOutline(BaseModel):
     target_audience: str = Field(description="Target audience description")
     key_takeaways: List[str] = Field(description="Key takeaways from the presentation")
     slides: List[SlideOutline] = Field(description="List of slide outlines")
-
-
-OUTLINE_SYSTEM_PROMPT = """You are an expert presentation designer. Your task is to create a structured outline for a presentation.
-
-## Guidelines:
-
-1. **Structure**: Create a logical flow with clear sections:
-   - Title slide
-   - Agenda/Overview (optional)
-   - Main content sections
-   - Summary/Key takeaways
-   - Q&A or Call to action
-
-2. **Content per slide**:
-   - 3-5 bullet points maximum
-   - Concise, impactful phrases
-   - Action-oriented language
-
-3. **Layouts**: Use appropriate layouts:
-   - "title" - Title slide with subtitle
-   - "title_content" - Title with bullet points
-   - "section" - Section header
-   - "two_content" - Side-by-side comparison
-   - "blank" - For images or custom content
-
-4. **Speaker Notes**: Add helpful notes for the presenter
-
-5. **Images**: Suggest images for visual slides
-
-## Style Guidelines:
-
-- **business**: Professional, data-driven, executive summary style
-- **educational**: Teaching-focused, step-by-step, with examples
-- **technical**: Detailed, code/diagram heavy, precise terminology
-- **creative**: Visually engaging, storytelling, minimal text
-- **minimal**: Clean, few words, impact-focused
-
-Respond with a valid JSON object matching the PresentationOutline schema.
-"""
 
 
 def _get_event_emitter(thread_id: str):
@@ -238,10 +199,7 @@ class GenerateOutlineTool(_PresentationOutlineBaseTool):
 Generate a complete JSON outline following the PresentationOutline schema.
 """
 
-            messages = [
-                SystemMessage(content=OUTLINE_SYSTEM_PROMPT),
-                HumanMessage(content=user_prompt),
-            ]
+            messages = build_context("presentation_outline", user=user_prompt)
 
             # Get structured output
             response = llm.with_structured_output(PresentationOutline).invoke(messages)
@@ -459,10 +417,7 @@ class RefineOutlineTool(_PresentationOutlineBaseTool):
 Please modify the outline according to the feedback and return the complete updated outline as JSON.
 """
 
-            messages = [
-                SystemMessage(content=OUTLINE_SYSTEM_PROMPT),
-                HumanMessage(content=user_prompt),
-            ]
+            messages = build_context("presentation_outline", user=user_prompt)
 
             response = llm.with_structured_output(PresentationOutline).invoke(messages)
             outline_dict = response.model_dump()
@@ -525,12 +480,7 @@ Provide:
 Return as a SlideOutline JSON object.
 """
 
-            messages = [
-                SystemMessage(
-                    content="You are an expert at creating presentation slide content. Generate clear, impactful content."
-                ),
-                HumanMessage(content=user_prompt),
-            ]
+            messages = build_context("presentation_slide", user=user_prompt)
 
             response = llm.with_structured_output(SlideOutline).invoke(messages)
             slide_dict = response.model_dump()

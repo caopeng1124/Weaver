@@ -19,7 +19,7 @@ os.environ.setdefault("OPENAI_API_KEY", "dummy-key")
 os.environ.setdefault("DATABASE_URL", "sqlite:///weaver.db")
 
 import agent.workflows.nodes as nodes  # noqa: E402
-from agent.prompts.prompt_manager import PromptManager, get_prompt_manager  # noqa: E402
+from agent.prompts.prompt_manager import get_prompt_manager  # noqa: E402
 
 
 def test_basic_functionality() -> None:
@@ -39,13 +39,13 @@ def test_basic_functionality() -> None:
     writer_prompt = mgr.get_writer_prompt()
     print(f"- Writer prompt length: {len(writer_prompt)}")
 
-    # Verify nodes pull system_prompts (no legacy imports)
+    # Verify model-facing nodes use the context entry point
     agent_src = inspect.getsource(nodes.agent_node)
     writer_src = inspect.getsource(nodes.writer_node)
-    uses_system = "system_prompts" in agent_src and "get_agent_prompt" in agent_src
-    writer_system = "system_prompts" in writer_src and "get_writer_prompt" in writer_src
-    print(f"- agent_node uses system_prompts: {uses_system}")
-    print(f"- writer_node uses system_prompts: {writer_system}")
+    uses_system = "build_context" in agent_src
+    writer_system = "build_context" in writer_src
+    print(f"- agent_node uses context builder: {uses_system}")
+    print(f"- writer_node uses context builder: {writer_system}")
 
 
 if __name__ == "__main__":
