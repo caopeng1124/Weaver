@@ -292,7 +292,7 @@ async def log_requests(request: Request, call_next):
                 },
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        elif settings.security_enabled and settings.app_env in {"prod", "production"} and not internal_key and path.startswith("/api/"):
+        elif settings.app_env in {"prod", "production"} and not internal_key and path.startswith("/api/"):
             response = JSONResponse(status_code=503, content={"detail": "Production security requires trusted API authentication"})
         else:
             security_token = current_context.set(SecurityContext(
@@ -1698,7 +1698,7 @@ def _store_search(query: str, user_id: str, limit: int = 3) -> List[str]:
                     texts.append(str(text))
             elif isinstance(value, str):
                 texts.append(value)
-        return untrusted(texts[:limit], source="stored_memory")
+        return untrusted(texts[:limit], source="stored_memory", private=True)
     except Exception as e:
         logger.debug(f"Store search failed: {e}")
         return []
@@ -2844,7 +2844,7 @@ async def remove_agent(agent_id: str):
 async def update_mcp_config(request: Request, payload: MCPConfigPayload):
     """Update MCP enable flag and servers config at runtime."""
     global mcp_enabled, mcp_servers_config, mcp_loaded_tools
-    if settings.security_enabled and settings.internal_api_key:
+    if settings.internal_api_key:
         context = current_context.get()
         admins = {item.strip() for item in settings.security_admin_principals.split(",") if item.strip()}
         if not context or context.principal not in admins:

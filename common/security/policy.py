@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from common.config import settings
 from common.security.content import contains_secret
+from common.security.permissions import current_scope
 
 
 @dataclass(frozen=True)
@@ -65,16 +66,14 @@ def allowed_url(url: str) -> bool:
                 return False
         except ValueError:
             pass
-        allowed = {
-            x.strip().lower() for x in settings.security_allowed_domains.split(",") if x.strip()
-        }
-        return not allowed or host in allowed
+        scope = current_scope()
+        return scope.network and (scope.domains is None or host in scope.domains)
     except ValueError:
         return False
 
 
 def resolve_workspace_file(path: str) -> Path:
-    root = Path(settings.security_workspace).resolve()
+    root = Path(current_scope().workspace).resolve()
     candidate = Path(path)
     candidate = candidate if candidate.is_absolute() else root / candidate
     # Reject symlinks, including parent components, rather than trusting textual prefixes.
@@ -100,7 +99,7 @@ def resolve_workspace_file(path: str) -> Path:
 @contextmanager
 def open_workspace_file(path: str, encoding: str, expected_version: str = ""):
     """Anchor each path component to an open directory; reject symlink/hardlink escapes."""
-    root = Path(settings.security_workspace).resolve()
+    root = Path(current_scope().workspace).resolve()
     resolved = resolve_workspace_file(path)
     parts = resolved.relative_to(root).parts
     directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -129,7 +128,15 @@ def open_workspace_file(path: str, encoding: str, expected_version: str = ""):
         os.close(directory)
 
 
-def evaluate(tool: str, args: dict, *, risk: bool = False) -> Decision:
+def evaluate(tool: str, args: dict, *, risk: bool = False, private_data: bool = False) -> Decision:
+    try:
+        scope = current_scope()
+    except (ValueError, TypeError):
+        return Decision("deny", "invalid_execution_policy")
+    if scope.tools is not None and tool not in scope.tools:
+        return Decision("deny", "tool_outside_principal_scope")
+    if (tool in NETWORK_TOOLS or tool.startswith("mcp_")) and not scope.network:
+        return Decision("deny", "network_not_authorized")
     # Inspect original arguments before previews, logging, or execution.
     if contains_secret(args):
         return Decision("deny", "sensitive_arguments")
@@ -155,6 +162,8 @@ def evaluate(tool: str, args: dict, *, risk: bool = False) -> Decision:
             not isinstance(u, str) or not allowed_url(u) for u in urls
         ):
             return Decision("deny", "destination_denied")
+    if tool in NETWORK_TOOLS and private_data:
+        return Decision("require_approval", "private_data_egress")
     if tool in READ_TOOLS:
         return Decision("allow", "scoped_read")
     if tool.startswith("mcp_"):
@@ -165,7 +174,10 @@ def evaluate(tool: str, args: dict, *, risk: bool = False) -> Decision:
         if risk:
             return Decision("deny", "untrusted_content_mcp_restricted")
         if mode in {"read", "approve"}:
-            return Decision("allow" if mode == "read" else "require_approval", "configured_mcp")
+            return Decision(
+                "allow" if mode == "read" and not private_data else "require_approval",
+                "private_data_egress" if private_data else "configured_mcp",
+            )
     return Decision("deny", "tool_not_authorized")
 
 

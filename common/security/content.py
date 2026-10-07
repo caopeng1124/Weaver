@@ -107,47 +107,52 @@ def _redact_plain(text: str) -> str:
     return text
 
 
-def redact_text(text: str) -> str:
-    if not enabled():
-        return text
+def _redact_text(text: str) -> str:
     decoded = unquote(text)
     if decoded != text and _redact_plain(decoded) != decoded:
         return "[REDACTED:ENCODED_SECRET]"
     return _redact_plain(text)
 
 
-def redact(value: Any) -> Any:
-    """Return a copy; never silently change live tool execution arguments."""
-    if not enabled():
-        return value
+def redact_text(text: str) -> str:
+    return _redact_text(text) if enabled() else text
+
+
+def redact_sensitive(value: Any) -> Any:
+    """Unconditional sanitizer for execution audits and approval previews."""
     if isinstance(value, str):
-        return redact_text(value)
+        return _redact_text(value)
     if isinstance(value, dict):
         return {
-            redact_text(str(key)): (
+            _redact_text(str(key)): (
                 "[REDACTED:CREDENTIAL]"
                 if str(key).lower() in SENSITIVE_FIELDS and item
-                else redact(item)
+                else redact_sensitive(item)
             )
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
-        return [redact(item) for item in value]
+        return [redact_sensitive(item) for item in value]
     return value
 
 
+def redact(value: Any) -> Any:
+    """Optional model-content sanitation; never changes execution arguments."""
+    return redact_sensitive(value) if enabled() else value
+
+
 def contains_secret(value: Any) -> bool:
-    if not enabled():
-        return False
-    if redact(value) != value and not isinstance(value, tuple):
-        return True
     if isinstance(value, str):
-        decoded = unquote(value)
-        return redact_text(decoded) != decoded
+        return _redact_text(value) != value
     if isinstance(value, dict):
-        return any(contains_secret(v) for v in value.values())
+        return any(
+            (str(key).lower() in SENSITIVE_FIELDS and bool(item))
+            or contains_secret(str(key))
+            or contains_secret(item)
+            for key, item in value.items()
+        )
     if isinstance(value, (list, tuple)):
-        return any(contains_secret(v) for v in value)
+        return any(contains_secret(item) for item in value)
     return False
 
 

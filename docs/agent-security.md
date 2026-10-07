@@ -44,7 +44,8 @@ SECURITY_STORE_PATH=data/security.sqlite3
 SECURITY_APPROVAL_TTL_S=300
 SECURITY_ALLOWED_DOMAINS=
 SECURITY_MCP_TOOLS={}
-SECURITY_POLICY_VERSION=1
+SECURITY_PRINCIPAL_POLICIES={}
+SECURITY_POLICY_VERSION=2
 SECURITY_ADMIN_PRINCIPALS=
 ```
 
@@ -57,7 +58,9 @@ SECURITY_ADMIN_PRINCIPALS=
 
 生产模式 `APP_ENV=prod|production` 必须配置 `WEAVER_INTERNAL_API_KEY`。反向代理应先认证用户，移除客户端伪造的身份头，再注入 `X-Weaver-User` 和内部凭据。未开启鉴权的开发模式仅提供单用户 `local` 身份，不构成多用户隔离。
 
-默认安全策略覆盖旧 `TOOL_APPROVAL` 开关；关闭事件展示不会关闭安全检查。仅在隔离开发环境需要恢复原有工具行为时使用 `SECURITY_ENABLED=false`，此时上述防护会整体停用。
+工具权限始终执行，独立于 `SECURITY_ENABLED`、`TOOL_APPROVAL`、工具展示开关和模型判断。`SECURITY_ENABLED=false` 只停用可选内容检测/输出脱敏，不再放开工具、Shell、文件、MCP、出站参数 DLP、审批和审计边界。生产部署仍应开启内容防护。
+
+`SECURITY_PRINCIPAL_POLICIES` 可按服务端可信身份缩小工具、工作区、抓取域名和联网范围；详见 [执行权限边界](execution-permissions.md)。记忆、RAG、MCP 返回数据会标记为私有来源；之后的搜索、抓取和 MCP 外发需要绑定参数的审批。这些规则不依赖提示注入检测是否命中。
 
 ## 面试演示
 

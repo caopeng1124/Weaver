@@ -266,4 +266,4 @@ def rag_search(query: str, n_results: int = 5) -> str:
             f"{r['content'][:500]}..."
         )
 
-    return untrusted("\n\n---\n\n".join(output_parts), source="rag_retrieval")
+    return untrusted("\n\n---\n\n".join(output_parts), source="rag_retrieval", private=True)

@@ -196,13 +196,14 @@ class Settings(BaseSettings):
     human_review: bool = False  # require manual approval before final report
     tool_approval: bool = False  # require approval before executing tools
     # Security is enforced independently of optional tool activity / legacy HITL.
-    security_enabled: bool = True
+    security_enabled: bool = True  # optional content scanning; execution authorization is always on
     security_workspace: str = "."
     security_store_path: str = "data/security.sqlite3"
     security_approval_ttl_s: int = Field(default=300, ge=10, le=3600)
     security_allowed_domains: str = ""  # comma-separated exact hosts; empty = public web
     security_mcp_tools: str = "{}"  # server-owned {qualified_tool_name: read|approve}
-    security_policy_version: str = "1"
+    security_principal_policies: str = "{}"  # server-owned principal -> tools/workspace/domains/network restrictions
+    security_policy_version: str = "2"
     security_admin_principals: str = ""  # trusted users allowed to reconfigure MCP processes
     max_revisions: int = 2
 

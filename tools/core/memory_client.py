@@ -18,7 +18,7 @@ _legacy_fallback_path = _ROOT_DIR / ".memory_store.json"
 
 
 def _normalize_user_id(user_id: Optional[str]) -> str:
-    if settings.security_enabled and settings.internal_api_key:
+    if settings.internal_api_key:
         context = current_context.get()
         if not context:
             raise SecurityViolation("Memory access requires a trusted execution identity")
@@ -214,11 +214,11 @@ def fetch_memories(
                                     break
 
             if out:
-                return untrusted(out[:k], source="recalled_memory")
+                return untrusted(out[:k], source="recalled_memory", private=True)
         except Exception as e:
             logger.warning(f"mem0 search failed: {e}")
 
     # Fallback to local JSON store (no semantic search, just recent)
     data = _fallback_load()
     entries = data.get(user, [])
-    return untrusted(list(reversed(entries))[:k], source="recalled_memory")
+    return untrusted(list(reversed(entries))[:k], source="recalled_memory", private=True)

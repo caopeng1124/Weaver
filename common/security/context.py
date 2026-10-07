@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from threading import Lock
 from uuid import uuid4
 
+from common.security.permissions import ExecutionScope, load_scope
+
 
 @dataclass
 class SecurityContext:
@@ -13,8 +15,13 @@ class SecurityContext:
     run_id: str = field(default_factory=lambda: uuid4().hex)
     thread_id: str = ""
     risk: bool = False
+    private_data_seen: bool = False
+    scope: ExecutionScope = field(init=False)
     sources: dict = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock, repr=False)
+
+    def __post_init__(self):
+        self.scope = load_scope(self.principal)
 
 
 @dataclass
@@ -22,6 +29,8 @@ class ExecutionPermit:
     key: str
     resource_version: str = ""
     consumed: bool = False
+    outbound: dict | None = None
+    outbound_key: str = ""
     lock: Lock = field(default_factory=Lock, repr=False)
 
     def consume(self, key: str) -> bool:
