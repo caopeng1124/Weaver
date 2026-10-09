@@ -6,8 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.workflows.agent_tools import build_agent_tools
-from common.config import settings
+from agent.workflows.agent_tools import build_agent_tools  # noqa: E402
+from common.config import settings  # noqa: E402
 
 
 def _names(tools):
@@ -23,7 +23,8 @@ def test_agent_tools_lightweight_browser_selected_by_default():
     assert "sb_browser_navigate" not in names
 
 
-def test_agent_tools_sandbox_browser_selected_when_enabled():
+def test_agent_tools_sandbox_browser_selected_when_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "sandbox_mode", "e2b")
     # Sandbox tools require a configured E2B API key.
     original_key = settings.e2b_api_key
     settings.e2b_api_key = "e2b_test_key"
@@ -41,7 +42,8 @@ def test_agent_tools_sandbox_browser_selected_when_enabled():
     assert "browser_navigate" not in names
 
 
-def test_agent_tools_web_dev_tools_when_enabled():
+def test_agent_tools_web_dev_tools_when_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "sandbox_mode", "e2b")
     # Sandbox tools require a configured E2B API key.
     original_key = settings.e2b_api_key
     settings.e2b_api_key = "e2b_test_key"

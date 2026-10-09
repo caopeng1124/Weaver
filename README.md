@@ -121,3 +121,7 @@ pnpm -C web dev
 ## 开源协议
 
 MIT License，详见 `LICENSE`。
+
+### Self-hosted execution sandbox
+
+Docker is the default execution backend. Build it with `make sandbox-build`, check it with `make sandbox-doctor`, and pair the chat controls using `make sandbox-token`. Python/Shell tools share a per-thread isolated workspace. E2B is an explicit opt-in backend. See [Docker deployment and security details](docs/docker-sandbox.md).

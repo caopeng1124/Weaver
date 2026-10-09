@@ -1,3 +1,4 @@
+import { sandboxHeaders } from '@/lib/localSandbox'
 import { useState, useRef, useCallback } from 'react'
 import { Message, Artifact, ToolInvocation, ImageAttachment, ProcessEvent, RunMetrics, MessageSource } from '@/types/chat'
 import { getApiBaseUrl } from '@/lib/api'
@@ -25,7 +26,7 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
       try {
         await fetch(
           `${getApiBaseUrl()}/api/chat/cancel/${threadId}`,
-          { method: 'POST' }
+          { method: 'POST', headers: sandboxHeaders() }
         )
         setCurrentStatus('已发送取消请求...')
       } catch (err) {
@@ -52,13 +53,14 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
         {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json', ...sandboxHeaders(),
           },
           body: JSON.stringify({
             messages: messageHistory.map(m => ({ role: m.role, content: m.content })),
             stream: true,
             model: selectedModel,
             search_mode: searchMode,
+            thread_id: threadId,
             images: (images || []).map(img => ({
               name: img.name,
               mime: img.mime,
@@ -368,7 +370,7 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [selectedModel, searchMode])
+  }, [selectedModel, searchMode, threadId])
 
   const handleApproveInterrupt = useCallback(async (decision: ApprovalDecision = 'approve', editedJson?: string) => {
     if (!pendingInterrupt || !threadId) return
@@ -380,7 +382,7 @@ export function useChatStream({ selectedModel, searchMode }: UseChatStreamProps)
         `${getApiBaseUrl()}/api/interrupt/resume`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...sandboxHeaders() },
           body: JSON.stringify({
             thread_id: threadId,
             payload: approvalPayload,

@@ -27,7 +27,7 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Thread
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import httpx
 
@@ -177,7 +177,6 @@ def _check_chat_sse(client: httpx.Client) -> CheckResult:
         }
 
         got_event = False
-        got_done = False
         with client.stream("POST", "/api/chat/sse", json=payload) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():
@@ -186,7 +185,6 @@ def _check_chat_sse(client: httpx.Client) -> CheckResult:
                 if line.startswith("event:"):
                     got_event = True
                 if line.startswith("event: done"):
-                    got_done = True
                     break
                 # Stop early once we've confirmed we can parse frames.
                 if got_event and time.time() - t0 > 8.0:
@@ -447,15 +445,26 @@ def _check_provider_firecrawl() -> CheckResult:
 
 def _check_provider_e2b() -> CheckResult:
     t0 = time.time()
+    if _WEAVER_SETTINGS is None or _WEAVER_SETTINGS.sandbox_mode not in {"e2b", "local"}:
+        return CheckResult("provider_e2b", True, "not_selected", time.time() - t0)
     configured = bool(_env("E2B_API_KEY", ""))
     if not configured and _WEAVER_SETTINGS is not None:
         configured = bool((getattr(_WEAVER_SETTINGS, "e2b_api_key", "") or "").strip())
     if not configured:
         return CheckResult("provider_e2b", True, "not_configured", time.time() - t0)
     try:
-        from tools.code.code_executor import execute_python_code
+        import uuid
 
-        res = execute_python_code.invoke({"code": "print(1+1)"})
+        from common.security.context import security_scope
+        from common.security.gateway import SecureTool
+        from tools.code.code_executor import execute_python_code
+        from tools.sandbox.local_service import get_local_service
+        thread = "smoke_" + uuid.uuid4().hex
+        try:
+            with security_scope("provider-smoke", thread):
+                res = SecureTool(execute_python_code).invoke({"code": "print(1+1)"}, config={"configurable": {"thread_id": thread}})
+        finally:
+            get_local_service().stop_thread(thread)
         ok = bool((res or {}).get("success"))
         stdout = (res or {}).get("stdout") or ""
         if isinstance(stdout, list):

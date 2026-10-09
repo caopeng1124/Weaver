@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -30,10 +30,8 @@ from tools.sandbox import (
     build_presentation_outline_tools,
     build_presentation_v2_tools,
     build_sandbox_browser_tools,
-    build_sandbox_files_tools,
     build_sandbox_presentation_tools,
     build_sandbox_sheets_tools,
-    build_sandbox_shell_tools,
     build_sandbox_vision_tools,
     build_sandbox_web_dev_tools,
     build_sandbox_web_search_tools,
@@ -65,7 +63,7 @@ def _e2b_api_key_configured() -> bool:
     return True
 
 
-def _configurable(config: RunnableConfig) -> Dict[str, Any]:
+def _configurable(config: RunnableConfig) -> dict[str, Any]:
     if isinstance(config, dict):
         cfg = config.get("configurable") or {}
         if isinstance(cfg, dict):
@@ -73,14 +71,14 @@ def _configurable(config: RunnableConfig) -> Dict[str, Any]:
     return {}
 
 
-def _enabled(profile: Dict[str, Any], key: str, default: bool = False) -> bool:
+def _enabled(profile: dict[str, Any], key: str, default: bool = False) -> bool:
     enabled_tools = profile.get("enabled_tools") or {}
     if isinstance(enabled_tools, dict) and key in enabled_tools:
         return bool(enabled_tools.get(key))
     return default
 
 
-def build_agent_tools(config: RunnableConfig) -> List[BaseTool]:
+def build_agent_tools(config: RunnableConfig) -> list[BaseTool]:
     """
     Build the toolset for "agent" mode based on `configurable.agent_profile.enabled_tools`.
 
@@ -105,7 +103,7 @@ def build_agent_tools(config: RunnableConfig) -> List[BaseTool]:
 
     thread_id = str(cfg.get("thread_id") or "default")
 
-    tools: List[BaseTool] = []
+    tools: list[BaseTool] = []
     e2b_ready = _e2b_api_key_configured()
 
     web_search_enabled = _enabled(profile, "web_search", default=True)
@@ -138,7 +136,7 @@ def build_agent_tools(config: RunnableConfig) -> List[BaseTool]:
 
     # Browser: prefer sandbox browser if explicitly enabled.
     if _enabled(profile, "sandbox_browser", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_sandbox_browser_tools(thread_id))
         elif settings.sandbox_mode == "daytona":
             # For daytona mode, rely on daytona tools; skip local sandbox browser
@@ -152,55 +150,56 @@ def build_agent_tools(config: RunnableConfig) -> List[BaseTool]:
 
     # Sandbox web search: visual search using sandbox browser
     if sandbox_web_search_enabled and not web_search_enabled:
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_sandbox_web_search_tools(thread_id))
 
-    # Sandbox files: file operations in E2B sandbox
-    if _enabled(profile, "sandbox_files", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
-            tools.extend(build_sandbox_files_tools(thread_id))
-
-    # Sandbox shell: command execution in E2B sandbox
-    if _enabled(profile, "sandbox_shell", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
-            tools.extend(build_sandbox_shell_tools(thread_id))
+    managed_sandbox = settings.sandbox_mode in {"docker", "e2b", "local"}
+    if managed_sandbox and _enabled(profile, "sandbox_files", default=True):
+        from tools.sandbox.local_tools import (
+            sandbox_list_files,
+            sandbox_read_file,
+            sandbox_write_file,
+        )
+        tools.extend([sandbox_list_files, sandbox_read_file, sandbox_write_file])
+    if managed_sandbox and _enabled(profile, "sandbox_shell", default=True):
+        tools.append(safe_bash)
 
     # Sandbox sheets: Excel/spreadsheet generation in E2B sandbox
     if _enabled(profile, "sandbox_sheets", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_sandbox_sheets_tools(thread_id))
 
     # Sandbox presentation: PowerPoint generation in E2B sandbox
     if _enabled(profile, "sandbox_presentation", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_sandbox_presentation_tools(thread_id))
 
     # Sandbox vision: Image analysis and OCR in E2B sandbox
     if _enabled(profile, "sandbox_vision", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_sandbox_vision_tools(thread_id))
 
     # Sandbox image edit: Advanced image editing in E2B sandbox
     if _enabled(profile, "sandbox_image_edit", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_image_edit_tools(thread_id))
 
     # Sandbox web development: scaffold & deploy web apps
     if _enabled(profile, "sandbox_web_dev", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_sandbox_web_dev_tools(thread_id))
 
     # Presentation outline: LLM-based PPT outline generation
     if _enabled(profile, "presentation_outline", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_presentation_outline_tools(thread_id))
 
     # Presentation v2: Enhanced PPT features (themes, transitions)
     if _enabled(profile, "presentation_v2", default=False):
-        if settings.sandbox_mode == "local" and e2b_ready:
+        if settings.sandbox_mode in {"local", "e2b"} and e2b_ready:
             tools.extend(build_presentation_v2_tools(thread_id))
 
-    if _enabled(profile, "python", default=False):
+    if managed_sandbox and _enabled(profile, "python", default=True):
         tools.append(execute_python_code)
         tools.append(chart_visualize)
 
@@ -249,7 +248,7 @@ def build_agent_tools(config: RunnableConfig) -> List[BaseTool]:
                 pass
 
     # De-dup by tool name to avoid collisions
-    deduped: Dict[str, BaseTool] = {}
+    deduped: dict[str, BaseTool] = {}
     for t in tools:
         name = getattr(t, "name", None)
         if isinstance(name, str) and name:

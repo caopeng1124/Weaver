@@ -162,6 +162,10 @@ def _permit(tool, args, context, version=""):
 
 
 def prepare(tool: BaseTool, args: dict, config: RunnableConfig | None) -> tuple[dict, Token | None]:
+    from tools.sandbox.permissions import SANDBOX_TOOLS, is_trusted_sandbox_tool
+
+    if tool.name in SANDBOX_TOOLS and not is_trusted_sandbox_tool(tool):
+        raise SecurityViolation("Sandbox capability requires a registered first-party tool")
     try:
         args = _validated_args(tool, args)
     except ValueError as error:

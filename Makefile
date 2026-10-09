@@ -77,3 +77,18 @@ web-lint:
 
 web-build:
 	@pnpm -C web build
+
+
+SANDBOX_IMAGE ?= weaver-sandbox:docker-v1
+.PHONY: sandbox-build sandbox-doctor sandbox-token sandbox-test
+sandbox-build:
+	docker build -f docker/sandbox.Dockerfile -t $(SANDBOX_IMAGE) docker
+
+sandbox-doctor:
+	@$(PY) -m tools.sandbox.cli diagnose
+
+sandbox-token:
+	@$(PY) -m tools.sandbox.cli token
+
+sandbox-test:
+	@WEAVER_TEST_DOCKER=1 $(PY) -m pytest -q tests/test_local_sandbox_docker.py

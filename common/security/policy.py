@@ -140,6 +140,13 @@ def evaluate(tool: str, args: dict, *, risk: bool = False, private_data: bool = 
     # Inspect original arguments before previews, logging, or execution.
     if contains_secret(args):
         return Decision("deny", "sensitive_arguments")
+    from tools.sandbox.permissions import SANDBOX_TOOLS
+    if tool in SANDBOX_TOOLS:
+        if settings.sandbox_mode not in {"docker", "e2b", "local"}:
+            return Decision("deny", "sandbox_disabled")
+        if risk:
+            return Decision("deny", "untrusted_content_execution_restricted")
+        return Decision("allow", "isolated_sandbox")
     if tool == "str_replace":
         try:
             path = resolve_workspace_file(str(args.get("path", "")))
