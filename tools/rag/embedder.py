@@ -5,13 +5,14 @@ Generates embeddings using OpenAI API or compatible endpoints.
 """
 
 import logging
-from typing import List, Optional
+import math
 
 logger = logging.getLogger(__name__)
 
 # Check for optional dependencies
 try:
     from openai import OpenAI
+
     OPENAI_AVAILABLE = True
 except ImportError:
     OpenAI = None
@@ -28,9 +29,9 @@ class Embedder:
     def __init__(
         self,
         model: str = "text-embedding-3-small",
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        dimensions: Optional[int] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        dimensions: int | None = None,
     ):
         """
         Initialize the embedder.
@@ -42,9 +43,7 @@ class Embedder:
             dimensions: Output embedding dimensions (for models that support it)
         """
         if not OPENAI_AVAILABLE:
-            raise ImportError(
-                "openai package is required. Install with: pip install openai"
-            )
+            raise ImportError("openai package is required. Install with: pip install openai")
 
         from common.config import settings
 
@@ -59,7 +58,7 @@ class Embedder:
 
         self.client = OpenAI(**client_kwargs)
 
-    def embed(self, texts: List[str]) -> List[List[float]]:
+    def embed(self, texts: list[str]) -> list[list[float]]:
         """
         Generate embeddings for a list of texts.
 
@@ -77,27 +76,34 @@ class Embedder:
         all_embeddings = []
 
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
 
             try:
                 from common.security.content import redact
+
                 kwargs = {"model": self.model, "input": redact(batch)}
                 if self.dimensions:
                     kwargs["dimensions"] = self.dimensions
 
                 response = self.client.embeddings.create(**kwargs)
                 batch_embeddings = [item.embedding for item in response.data]
+                if len(batch_embeddings) != len(batch) or any(
+                    not vector
+                    or not all(math.isfinite(value) for value in vector)
+                    or not any(vector)
+                    for vector in batch_embeddings
+                ):
+                    raise ValueError("Invalid embedding response")
                 all_embeddings.extend(batch_embeddings)
 
             except Exception as e:
                 logger.error(f"Embedding error: {e}")
-                # Return zero vectors for failed batch
-                dim = self.dimensions or 1536
-                all_embeddings.extend([[0.0] * dim] * len(batch))
+                # A failed embedding must not index/query fabricated zero vectors.
+                raise RuntimeError("Embedding service is unavailable") from e
 
         return all_embeddings
 
-    def embed_single(self, text: str) -> List[float]:
+    def embed_single(self, text: str) -> list[float]:
         """
         Generate embedding for a single text.
 
@@ -110,7 +116,7 @@ class Embedder:
         embeddings = self.embed([text])
         return embeddings[0] if embeddings else []
 
-    def embed_query(self, query: str) -> List[float]:
+    def embed_query(self, query: str) -> list[float]:
         """
         Embed a search query.
 
@@ -125,7 +131,7 @@ class Embedder:
         """
         return self.embed_single(query)
 
-    def embed_documents(self, documents: List[str]) -> List[List[float]]:
+    def embed_documents(self, documents: list[str]) -> list[list[float]]:
         """
         Embed a list of documents.
 

@@ -5,12 +5,20 @@ Provides a LangChain-compatible tool for searching local documents.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 from langchain_core.tools import tool
 
 from tools.rag.document_loader import DocumentLoader
 from tools.rag.embedder import Embedder
+from tools.rag.permissions import (
+    DocumentPermissions,
+    RAGPermissionError,
+    collection_for,
+    principal_id,
+)
 from tools.rag.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -29,7 +37,7 @@ class RAGTool:
     def __init__(
         self,
         collection_name: str = "weaver_documents",
-        persist_directory: Optional[str] = None,
+        persist_directory: str | None = None,
         embedding_model: str = "text-embedding-3-small",
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
@@ -49,6 +57,7 @@ class RAGTool:
             chunk_overlap=chunk_overlap,
         )
         self.embedder = Embedder(model=embedding_model)
+        self.collection_name = collection_name
         self.vector_store = VectorStore(
             collection_name=collection_name,
             persist_directory=persist_directory,
@@ -57,10 +66,10 @@ class RAGTool:
 
     def add_document(
         self,
-        file_path: str = None,
-        content: bytes = None,
-        filename: str = None,
-    ) -> Dict[str, Any]:
+        file_path: str | None = None,
+        content: bytes | None = None,
+        filename: str | None = None,
+    ) -> dict[str, Any]:
         """
         Add a document to the RAG store.
 
@@ -72,6 +81,9 @@ class RAGTool:
         Returns:
             Dict with document info
         """
+        principal = principal_id()
+        if self.collection_name != collection_for(principal):
+            raise RAGPermissionError("Uploads must use the owner's collection")
         try:
             if file_path:
                 documents = self.loader.load(file_path)
@@ -90,11 +102,19 @@ class RAGTool:
                 }
 
             # Sanitize before either the embedding API or the local vector store sees content.
-            from common.security.content import redact
+            from common.security.content import redact, redact_text
             from common.security.runtime import untrusted
-            for document in documents:
-                document.content = untrusted(document.content, source=str(filename or file_path or "uploaded_document"))
+
+            document_id = uuid4().hex
+            source = redact_text(source)
+            for index, document in enumerate(documents):
+                document.content = untrusted(
+                    document.content, source=str(filename or file_path or "uploaded_document")
+                )
                 document.metadata = redact(document.metadata)
+                document.metadata.update(document_id=document_id, chunk_index=index)
+                document.doc_id = document_id
+                document.chunk_id = f"{document_id}_{index}"
 
             # Generate embeddings
             texts = [doc.content for doc in documents]
@@ -102,6 +122,14 @@ class RAGTool:
 
             # Add to vector store
             ids = self.vector_store.add_documents(documents, embeddings)
+            DocumentPermissions().register(
+                document_id,
+                principal,
+                self.collection_name,
+                source,
+                redact_text(filename or Path(source).name),
+                documents,
+            )
 
             logger.info(f"Added document: {source} ({len(documents)} chunks)")
 
@@ -110,13 +138,14 @@ class RAGTool:
                 "source": source,
                 "chunks": len(documents),
                 "ids": ids,
+                "document_id": document_id,
             }
 
         except Exception as e:
             logger.error(f"Add document error: {e}")
             return {
                 "success": False,
-                "error": str(e),
+                "error": "Document indexing failed",
                 "source": file_path or filename,
             }
 
@@ -124,8 +153,8 @@ class RAGTool:
         self,
         query: str,
         n_results: int = 5,
-        filter_source: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        filter_source: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Search for relevant document chunks.
 
@@ -137,9 +166,21 @@ class RAGTool:
         Returns:
             List of result dicts with content and metadata
         """
-        filter_metadata = None
+        from common.security.runtime import audit, check_outbound, untrusted
+
+        principal = principal_id()
+        if not 1 <= n_results <= 20:
+            raise ValueError("n_results must be between 1 and 20")
+        permissions = DocumentPermissions()
+        allowed = permissions.readable(principal, self.collection_name)
         if filter_source:
-            filter_metadata = {"source": filter_source}
+            allowed = [d for d in allowed if d["source"] == filter_source]
+        if not allowed:
+            return []
+        allowed_ids = {d["id"] for d in allowed}
+        # Resolve permissions before embedding; callers cannot provide an ACL filter.
+        check_outbound("rag_search", {"query": query, "n_results": n_results})
+        filter_metadata = {"document_id": {"$in": sorted(allowed_ids)}}
 
         results = self.vector_store.search(
             query=query,
@@ -147,22 +188,42 @@ class RAGTool:
             filter_metadata=filter_metadata,
         )
 
-        return [
-            {
-                "content": doc.content,
-                "score": score,
-                "source": doc.metadata.get("source", "unknown"),
-                "filename": doc.metadata.get("filename", "unknown"),
-                "chunk_index": doc.metadata.get("chunk_index", 0),
-            }
-            for doc, score in results
-        ]
+        verified = []
+        for doc, score in results:
+            if doc.metadata.get("document_id") not in allowed_ids:
+                continue
+            record = permissions.verify_chunk(principal, self.collection_name, doc)
+            if record is None:
+                audit("rag_chunk_rejected", reason="permission_or_integrity_changed")
+                continue
+            # Full chunks are inspected before any display truncation. Canonical
+            # source fields come from the ACL catalog, not vector metadata.
+            verified.append(
+                untrusted(
+                    {
+                        "content": doc.content,
+                        "score": score,
+                        "source": record["source"],
+                        "filename": record["filename"],
+                        "chunk_index": record["chunk_index"],
+                        "document_id": record["id"],
+                        "chunk_id": doc.chunk_id,
+                    },
+                    source=f"rag:{record['id']}",
+                )
+            )
+        return verified
 
-    def list_documents(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def list_documents(self, limit: int = 100) -> list[dict[str, Any]]:
         """List all documents in the store."""
-        return self.vector_store.list_documents(limit=limit)
+        from common.security.runtime import untrusted
 
-    def delete_document(self, source: str) -> Dict[str, Any]:
+        return untrusted(
+            DocumentPermissions().list_chunks(principal_id(), self.collection_name)[:limit],
+            source="rag_document_list",
+        )
+
+    def delete_document(self, source: str) -> dict[str, Any]:
         """
         Delete all chunks from a specific source.
 
@@ -172,20 +233,28 @@ class RAGTool:
         Returns:
             Result dict
         """
-        try:
-            count = self.vector_store.delete_documents(
-                filter_metadata={"source": source}
-            )
-            return {"success": True, "deleted": count}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        from common.security.content import redact_text
+
+        principal = principal_id()
+        if self.collection_name != collection_for(principal):
+            raise RAGPermissionError("Only the owner can delete documents")
+        permissions = DocumentPermissions()
+        chunks = permissions.list_chunks(principal, self.collection_name)
+        document_ids = permissions.deactivate_source(
+            principal, self.collection_name, redact_text(source)
+        )
+        ids = [c["id"] for c in chunks if c["document_id"] in document_ids]
+        # Delete by authoritative document IDs, including retry after an earlier
+        # failed physical deletion (whose catalog entries are already inactive).
+        self.vector_store.delete_documents(filter_metadata={"document_id": {"$in": document_ids}})
+        return {"success": True, "deleted": len(ids)}
 
     def count(self) -> int:
         """Get total number of chunks in store."""
-        return self.vector_store.count()
+        return len(DocumentPermissions().list_chunks(principal_id(), self.collection_name))
 
 
-def get_rag_tool(*, collection_name: Optional[str] = None) -> Optional[RAGTool]:
+def get_rag_tool(*, collection_name: str | None = None) -> RAGTool | None:
     """
     Get a cached RAG tool instance.
 
@@ -236,25 +305,14 @@ def rag_search(query: str, n_results: int = 5) -> str:
     Returns:
         Relevant excerpts from local documents with source information
     """
-    import hashlib
-
     from common.config import settings
-    from common.security.context import current_context
     from common.security.runtime import untrusted
+    from tools.rag.service import search_documents
 
-    collection_name = None
-    if settings.internal_api_key:
-        context = current_context.get()
-        if not context:
-            return "[SECURITY_BLOCKED] RAG retrieval requires a trusted user identity"
-        base = (settings.rag_collection_name or "weaver_documents").strip()
-        suffix = hashlib.sha256(context.principal.encode()).hexdigest()[:12]
-        collection_name = f"{base}__u_{suffix}"
-    rag = get_rag_tool(collection_name=collection_name)
-    if rag is None:
+    if not settings.rag_enabled:
         return "RAG search is not enabled. Please enable it in settings."
 
-    results = rag.search(query, n_results=n_results)
+    results = search_documents(query, n_results=n_results)
 
     if not results:
         return "No relevant documents found."
@@ -262,8 +320,7 @@ def rag_search(query: str, n_results: int = 5) -> str:
     output_parts = []
     for i, r in enumerate(results, 1):
         output_parts.append(
-            f"[{i}] Source: {r['filename']} (score: {r['score']:.2f})\n"
-            f"{r['content'][:500]}..."
+            f"[{i}] Source: {r['filename']} (score: {r['score']:.2f})\n{r['content'][:500]}..."
         )
 
     return untrusted("\n\n---\n\n".join(output_parts), source="rag_retrieval")

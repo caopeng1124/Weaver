@@ -295,6 +295,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/documents/permissions/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Document Permissions
+         * @description Replace the reader grant set. Only the authenticated document owner can do this.
+         */
+        put: operations["update_document_permissions_api_documents_permissions__document_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/documents/search": {
         parameters: {
             query?: never;
@@ -1829,6 +1849,11 @@ export interface components {
             /** User Id */
             user_id?: string | null;
         };
+        /** DocumentPermissionsUpdate */
+        DocumentPermissionsUpdate: {
+            /** Readers */
+            readers: string[];
+        };
         /** EvidenceClaim */
         EvidenceClaim: {
             /** Claim */
@@ -3012,6 +3037,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_document_permissions_api_documents_permissions__document_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentPermissionsUpdate"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

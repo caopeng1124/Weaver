@@ -70,22 +70,28 @@ async def test_rag_upload_uses_isolated_collection_when_internal_auth_enabled(mo
 
 
 @pytest.mark.asyncio
-async def test_rag_list_uses_isolated_collection_when_internal_auth_enabled(monkeypatch):
+async def test_rag_list_only_exposes_authorized_catalog_entries(monkeypatch, tmp_path):
     monkeypatch.setitem(main.settings.__dict__, "internal_api_key", "test-key")
     monkeypatch.setitem(main.settings.__dict__, "auth_user_header", "X-Weaver-User")
     monkeypatch.setitem(main.settings.__dict__, "rag_enabled", True)
     monkeypatch.setitem(main.settings.__dict__, "rag_collection_name", "weaver_documents")
+    monkeypatch.setitem(
+        main.settings.__dict__, "rag_permissions_path", str(tmp_path / "acl.sqlite3")
+    )
 
-    import tools.rag.rag_tool as rag_tool_mod
+    from tools.rag.document_loader import Document
+    from tools.rag.permissions import DocumentPermissions
 
-    seen_collections = []
-    rag = _FakeRag()
-
-    def _fake_get_rag_tool(*, collection_name=None):
-        seen_collections.append(collection_name)
-        return rag
-
-    monkeypatch.setattr(rag_tool_mod, "get_rag_tool", _fake_get_rag_tool)
+    permissions = DocumentPermissions()
+    for user in ("alice", "bob"):
+        permissions.register(
+            user,
+            user,
+            _expected_collection(user),
+            f"{user}.md",
+            f"{user}.md",
+            [Document(content=user, chunk_id=f"{user}_chunk")],
+        )
 
     transport = ASGITransport(app=main.app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -98,5 +104,5 @@ async def test_rag_list_uses_isolated_collection_when_internal_auth_enabled(monk
         )
         assert resp.status_code == 200
 
-    assert seen_collections == [_expected_collection("bob")]
-
+    assert resp.json()["total_chunks"] == 1
+    assert [d["filename"] for d in resp.json()["documents"]] == ["bob.md"]

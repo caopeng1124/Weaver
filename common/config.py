@@ -297,6 +297,7 @@ class Settings(BaseSettings):
     # RAG (Retrieval-Augmented Generation) Config
     rag_enabled: bool = False  # Enable local document RAG
     rag_store_path: Optional[str] = None  # Path for persistent vector storage
+    rag_permissions_path: str = "data/rag_permissions.sqlite3"  # Authoritative document ACLs
     rag_collection_name: str = "weaver_documents"  # ChromaDB collection name
     rag_embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
     rag_chunk_size: int = 1000  # Document chunk size
