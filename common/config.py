@@ -433,10 +433,27 @@ class Settings(BaseSettings):
     daytona_entrypoint: str = "/usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf"
     daytona_vnc_password: str = ""  # Must be set via environment variable
 
-    # Sandbox mode: local (E2B), daytona (remote), none (disabled)
-    sandbox_mode: str = "local"
+    # Docker is the self-hosted default; "local" remains a legacy E2B alias.
+    sandbox_mode: str = "docker"
+    sandbox_image: str = "weaver-sandbox:docker-v1"
+    sandbox_state_dir: str = "data/sandbox"
+    sandbox_workspace_roots: list[str] = Field(default_factory=list)
+    sandbox_default_profile: str = "sandbox"
+    sandbox_cpus: float = Field(default=1.0, ge=0.1, le=32)
+    sandbox_memory_mb: int = Field(default=512, ge=64, le=32768)
+    sandbox_workspace_mb: int = Field(default=128, ge=16, le=4096)
+    sandbox_timeout_seconds: int = Field(default=60, ge=1, le=600)
+    sandbox_idle_seconds: int = Field(default=900, ge=10, le=86400)
+    sandbox_artifact_retention_seconds: int = Field(default=86400, ge=60, le=2592000)
+    sandbox_max_sessions: int = Field(default=8, ge=1, le=128)
+    sandbox_max_output_bytes: int = Field(default=262144, ge=1024, le=4194304)
+    sandbox_max_file_bytes: int = Field(default=4194304, ge=1024, le=67108864)
+    sandbox_max_import_bytes: int = Field(default=16777216, ge=1024, le=268435456)
+    sandbox_max_artifact_bytes: int = Field(default=268435456, ge=1024, le=10737418240)
+    sandbox_max_files: int = Field(default=500, ge=1, le=10000)
+    sandbox_e2b_template: str = "base"
     sandbox_template_browser: str = ""  # e2b sandbox browser template ID (e.g., chrome-stable)
-    sandbox_allow_internet: bool = True  # allow internet access inside sandbox
+    sandbox_allow_internet: bool = False  # allow internet access inside sandbox
 
     # Tool / middleware controls
     tool_retry: bool = True
@@ -743,7 +760,7 @@ def apply_app_config_overrides(settings: Settings) -> None:
     if (
         app_cfg.sandbox
         and app_cfg.sandbox.use_sandbox is False
-        and settings.sandbox_mode == "local"
+        and settings.sandbox_mode in {"docker", "local", "e2b"}
     ):
         # allow disabling sandbox via config
         settings.sandbox_mode = "none"

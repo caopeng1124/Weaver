@@ -1,0 +1,9 @@
+# Runtime libraries are baked into the image; task containers cannot fetch packages.
+numpy==2.2.6
+pandas==2.2.3
+matplotlib==3.10.3
+Pillow==11.2.1
+openpyxl==3.1.5
+python-docx==1.2.0
+python-pptx==1.0.2
+pypdf==5.6.1

@@ -136,3 +136,6 @@ third_party/research_refs/
 # yarn.lock
 # pnpm-lock.yaml
 nul
+
+# Private sandbox control state and pairing token
+data/sandbox/

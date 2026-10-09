@@ -21,10 +21,18 @@ import { Library } from '@/components/views/Library'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { BrowserViewer } from './BrowserViewer'
 import { SecurityApprovalCard } from './SecurityApprovalCard'
+import { LocalSandboxPanel } from './LocalSandboxPanel'
+import { getApiBaseUrl } from '@/lib/api'
 
 export function Chat() {
   // UI State
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sandboxMode, setSandboxMode] = useState('none')
+  useEffect(() => {
+    fetch(`${getApiBaseUrl()}/api/config`).then(response => response.json()).then(config => {
+      setSandboxMode(config.features?.sandbox_mode || 'none')
+    }).catch(() => {})
+  }, [])
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL)
   const [searchMode, setSearchMode] = useState('') // empty = direct LLM only
   const [showScrollButton, setShowScrollButton] = useState(false)
@@ -307,6 +315,10 @@ export function Chat() {
           hasArtifacts={artifacts.length > 0}
         />
 
+        {currentView === 'dashboard' && ['docker', 'e2b', 'local'].includes(sandboxMode) && (
+          <LocalSandboxPanel threadId={threadId} chatBusy={isLoading} onSessionChange={setThreadId} />
+        )}
+
         {/* Dynamic Content Area */}
         {renderContent()}
 
@@ -366,7 +378,7 @@ export function Chat() {
       )}
 
       {/* Browser Viewer - Shows when there's an active thread */}
-      {currentView === 'dashboard' && threadId && (
+      {currentView === 'dashboard' && threadId && ['e2b', 'local'].includes(sandboxMode) && (
         <>
           {/* Browser Viewer Toggle Button */}
           <Button

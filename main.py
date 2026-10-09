@@ -128,6 +128,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from tools.sandbox.api import router as sandbox_control_router
+
+app.include_router(sandbox_control_router)
+
 APP_STARTED_AT = time.monotonic()
 
 
@@ -519,6 +523,10 @@ async def startup_event():
     logger.info("Weaver Research Agent Starting...")
     logger.info("=" * 80)
 
+    if settings.sandbox_mode in {"docker", "e2b", "local"}:
+        from tools.sandbox.lifecycle import start as start_sandbox_lifecycle
+        await start_sandbox_lifecycle()
+
     # Normalize common proxy env quirks (e.g. `ALL_PROXY=socks://...`) so
     # downstream httpx/OpenAI clients don't crash during request handling.
     try:
@@ -673,6 +681,9 @@ async def shutdown_event():
     logger.info("=" * 80)
     logger.info("Weaver Research Agent Shutting Down...")
     logger.info("=" * 80)
+
+    from tools.sandbox.lifecycle import shutdown as shutdown_sandbox_lifecycle
+    await shutdown_sandbox_lifecycle()
 
     # Stop lifespan-managed background tasks.
     global _rate_limit_cleanup_task
@@ -959,6 +970,7 @@ class ImagePayload(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[Message]
+    thread_id: Optional[str] = Field(default=None, max_length=256)
     stream: bool = True
     model: Optional[str] = None
     search_mode: Optional[SearchMode] = None
@@ -1302,8 +1314,19 @@ async def cancel_chat(thread_id: str, request: Request, payload: CancelRequest |
     reason = payload.reason if payload else "User requested cancellation"
     logger.info(f"Cancel request received for thread: {thread_id}, reason: {reason}")
 
-    # 1. 通过 cancellation_manager 取消令牌
+    # Check durable sandbox ownership before any cancellation side effect.
+    from tools.sandbox.local_service import _service as sandbox_service
+    context = current_context.get()
+    sandbox_session = None
+    if sandbox_service and context:
+        try:
+            sandbox_session = await asyncio.to_thread(sandbox_service.find_thread, thread_id, context.principal)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
     cancelled = await cancellation_manager.cancel(thread_id, reason)
+    if sandbox_session:
+        await asyncio.to_thread(sandbox_service.stop, sandbox_session["id"], context.principal)
+        cancelled = True
 
     # 2. 取消对应的异步任务（如果存在）
     if thread_id in active_streams:
@@ -1358,6 +1381,9 @@ async def cancel_all_chats(request: Request):
         ]
         for task_id in owned_task_ids:
             await cancellation_manager.cancel(task_id, reason)
+            from tools.sandbox.local_service import _service as sandbox_service
+            if sandbox_service:
+                await asyncio.to_thread(sandbox_service.stop_thread, task_id)
             task = active_streams.pop(task_id, None)
             if task:
                 task.cancel()
@@ -1372,6 +1398,9 @@ async def cancel_all_chats(request: Request):
         for task in active_streams.values():
             task.cancel()
         active_streams.clear()
+        from tools.sandbox.local_service import _service as sandbox_service
+        if sandbox_service:
+            await asyncio.to_thread(sandbox_service.cleanup, all_sessions=True)
 
     return {
         "status": "all_cancelled",
@@ -2330,6 +2359,22 @@ async def stream_agent_events(
                         pass
 
 
+def _execution_thread_id(request: Request, requested: str | None) -> str:
+    """Only a durable sandbox owner may resume a managed execution thread."""
+    from tools.sandbox.local_service import _service as sandbox_service
+    context = current_context.get()
+    if requested and sandbox_service and context:
+        try:
+            session = sandbox_service.find_thread(requested, context.principal)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        if session:
+            if session["state"] != "active":
+                raise HTTPException(409, "Sandbox stopped; start a new chat")
+            return session["thread"]
+    return f"thread_{uuid.uuid4().hex}"
+
+
 @app.post("/api/chat/sse")
 async def chat_sse(request: Request, payload: ChatRequest):
     """
@@ -2350,8 +2395,8 @@ async def chat_sse(request: Request, payload: ChatRequest):
     user_id = principal_id if internal_key and principal_id else (payload.user_id or settings.memory_user_id)
     mode_info = _normalize_search_mode(payload.search_mode)
     model = (payload.model or settings.primary_model).strip()
-    thread_id = f"thread_{uuid.uuid4().hex}"
-    set_thread_owner(thread_id, getattr(request.state, "principal_id", "") or "anonymous")
+    thread_id = _execution_thread_id(request, payload.thread_id)
+    set_thread_owner(thread_id, principal_id if internal_key else "local")
 
     async def _sse_generator():
         gauge = None
@@ -2464,9 +2509,9 @@ async def chat(request: Request, payload: ChatRequest):
         logger.debug(f"  Message preview: {last_message[:200]}...")
 
         if payload.stream:
-            thread_id = f"thread_{uuid.uuid4().hex}"
+            thread_id = _execution_thread_id(request, payload.thread_id)
             logger.info(f"Starting streaming response | Thread: {thread_id}")
-            set_thread_owner(thread_id, principal_id or "anonymous")
+            set_thread_owner(thread_id, principal_id if internal_key else "local")
 
             # Return streaming response with thread_id in header for cancellation
             return StreamingResponse(
@@ -2547,7 +2592,12 @@ async def chat(request: Request, payload: ChatRequest):
                 },
                 "recursion_limit": 50,
             }
-            thread_id = thread_id or f"thread_{uuid.uuid4().hex}"
+            thread_id = _execution_thread_id(request, payload.thread_id)
+            config["configurable"]["thread_id"] = thread_id
+            security_context = current_context.get()
+            if security_context:
+                security_context.thread_id = thread_id
+            set_thread_owner(thread_id, principal_id if internal_key else "local")
             metrics = metrics_registry.start(
                 thread_id, model=model, route=mode_info.get("mode", "direct")
             )
@@ -2564,6 +2614,8 @@ async def chat(request: Request, payload: ChatRequest):
                 timestamp=datetime.now().isoformat(),
             )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(
             f"鉁?Chat error | Thread: {thread_id or 'N/A'} | "
@@ -3202,6 +3254,8 @@ async def public_config():
         "features": {
             "mcp_enabled": bool(mcp_enabled),
             "sandbox_mode": settings.sandbox_mode,
+            "sandbox_execution": settings.sandbox_mode in {"docker", "e2b", "local"},
+            "sandbox_cloud_browser": settings.sandbox_mode in {"e2b", "local"},
             "prometheus_enabled": bool(settings.enable_prometheus),
             "tracing_enabled": bool(settings.enable_tracing),
         },

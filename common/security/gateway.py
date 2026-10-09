@@ -67,7 +67,12 @@ def tool_identity(tool: BaseTool) -> str:
 
 
 def prepare(tool: BaseTool, args: dict, config: RunnableConfig | None) -> tuple[dict, Token | None]:
+    from tools.sandbox.permissions import SANDBOX_TOOLS, is_trusted_sandbox_tool
+    if tool.name in SANDBOX_TOOLS and not is_trusted_sandbox_tool(tool):
+        raise SecurityViolation("Sandbox capability requires a registered first-party tool")
     if not enabled():
+        if tool.name in SANDBOX_TOOLS:
+            _context(config)
         return args, None
     try:
         args = _validated_args(tool, args)

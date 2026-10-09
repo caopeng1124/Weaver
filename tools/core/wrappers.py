@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
 from agent.core.events import ToolEventType, get_emitter_sync
@@ -41,19 +43,19 @@ class EventedTool(BaseTool):
         self.original = original
         self.thread_id = thread_id
 
-    def _emit_sync(self, event_type: ToolEventType, data: Dict[str, Any]):
+    def _emit_sync(self, event_type: ToolEventType, data: dict[str, Any]):
         """Best-effort async emit from sync context."""
         emitter = get_emitter_sync(self.thread_id)
         emitter.emit_sync(event_type, data)
 
-    def _run(self, tool_input: Any = None, **kwargs) -> Any:
+    def _run(self, config: RunnableConfig, tool_input: Any = None, **kwargs) -> Any:
         start = time.time()
         self._emit_sync(
             ToolEventType.TOOL_START,
             {"tool": self.name, "args": {"tool_input": tool_input, **kwargs}},
         )
         try:
-            result = self._invoke_original(tool_input, **kwargs)
+            result = self._invoke_original(tool_input, config=config, **kwargs)
             duration = (time.time() - start) * 1000
             self._emit_sync(
                 ToolEventType.TOOL_RESULT,
@@ -72,7 +74,7 @@ class EventedTool(BaseTool):
             )
             raise
 
-    async def _arun(self, tool_input: Any = None, **kwargs) -> Any:
+    async def _arun(self, config: RunnableConfig, tool_input: Any = None, **kwargs) -> Any:
         start = time.time()
         emitter = get_emitter_sync(self.thread_id)
         await emitter.emit(
@@ -80,7 +82,7 @@ class EventedTool(BaseTool):
             {"tool": self.name, "args": {"tool_input": tool_input, **kwargs}},
         )
         try:
-            result = await self._invoke_original_async(tool_input, **kwargs)
+            result = await self._invoke_original_async(tool_input, config=config, **kwargs)
             duration = (time.time() - start) * 1000
             await emitter.emit(
                 ToolEventType.TOOL_RESULT,
@@ -95,15 +97,15 @@ class EventedTool(BaseTool):
             )
             raise
 
-    def _invoke_original(self, tool_input: Any = None, **kwargs):
+    def _invoke_original(self, tool_input: Any = None, *, config=None, **kwargs):
         # BaseTool instance
         if isinstance(self.original, BaseTool):
             # If tool_input missing but kwargs provided, treat kwargs as the input payload
             payload = tool_input if tool_input is not None else (kwargs if kwargs else tool_input)
             return (
-                self.original.run(payload, **kwargs)
+                self.original.run(payload, config=config)
                 if payload is not None
-                else self.original.run({})
+                else self.original.run({}, config=config)
             )
         # callable
         try:
@@ -114,7 +116,7 @@ class EventedTool(BaseTool):
                 return self.original(**kwargs)
             return self.original()
 
-    async def _invoke_original_async(self, tool_input: Any = None, **kwargs):
+    async def _invoke_original_async(self, tool_input: Any = None, *, config=None, **kwargs):
         if isinstance(self.original, BaseTool):
             # If original supports arun, prefer it
             if hasattr(self.original, "arun"):
@@ -122,15 +124,15 @@ class EventedTool(BaseTool):
                     tool_input if tool_input is not None else (kwargs if kwargs else tool_input)
                 )
                 return (
-                    await self.original.arun(payload, **kwargs)
+                    await self.original.arun(payload, config=config)
                     if payload is not None
-                    else await self.original.arun({})
+                    else await self.original.arun({}, config=config)
                 )
             payload = tool_input if tool_input is not None else (kwargs if kwargs else tool_input)
             return (
-                self.original.run(payload, **kwargs)
+                self.original.run(payload, config=config)
                 if payload is not None
-                else self.original.run({})
+                else self.original.run({}, config=config)
             )
         try:
             result = self.original(tool_input, **kwargs)
@@ -144,11 +146,10 @@ class EventedTool(BaseTool):
         return result
 
 
-def wrap_tools_with_events(tools: Iterable[Any], thread_id: str = "default") -> List[Any]:
+def wrap_tools_with_events(tools: Iterable[Any], thread_id: str = "default") -> list[Any]:
     """Wrap a list of tools with EventedTool, skipping ones already evented."""
-    wrapped: List[Any] = []
+    wrapped: list[Any] = []
     for tool in tools:
-        name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
         # Many first-party tools already emit tool_* events (and expose a switch
         # like `emit_events`). Avoid double-emitting start/result/error.
         if (

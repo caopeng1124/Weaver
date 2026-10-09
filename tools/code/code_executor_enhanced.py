@@ -92,6 +92,11 @@ class CodeExecutorTool(WeaverTool):
         Returns:
             ToolResult with execution results including stdout, stderr, and images
         """
+        if settings.sandbox_mode not in {"e2b", "local"} or settings.security_enabled:
+            return self.fail_response(
+                "Use the managed execute_python_code tool for the configured sandbox and security context",
+                metadata={"error_type": "ManagedSandboxRequired"},
+            )
         if not E2B_AVAILABLE:
             return self.fail_response(
                 "E2B code interpreter not installed. Install with: pip install e2b-code-interpreter",

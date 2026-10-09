@@ -282,6 +282,8 @@ class SandboxBrowserSession:
                 self._last_page_title = title.strip()
 
     def _ensure_sandbox_and_page(self) -> SandboxBrowserHandles:
+        if settings.sandbox_mode not in {"e2b", "local"}:
+            raise RuntimeError("E2B browser requires explicit SANDBOX_MODE=e2b; Docker mode never starts a cloud browser")
         with self._lock:
             if self._handles is not None:
                 return self._handles

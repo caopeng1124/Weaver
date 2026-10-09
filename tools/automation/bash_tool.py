@@ -1,49 +1,40 @@
+"""Shell execution is always confined to the selected sandbox backend."""
+
 import shlex
-import subprocess
-from pathlib import Path
-from typing import Optional
 
-from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
 
-from common.security.content import enabled
+from tools.sandbox.permissions import authorize
+from tools.sandbox.workspace_files import validate_path
 
-SAFE_DEFAULT_CWD = Path(".")
-DEFAULT_TIMEOUT = 20  # seconds
-DISALLOWED = {"rm", "shutdown", "reboot"}
+DEFAULT_TIMEOUT = 20
 
 
 @tool
-def safe_bash(cmd: str, cwd: Optional[str] = None, timeout: int = DEFAULT_TIMEOUT) -> str:
-    """
-    Run a shell command with basic safety guard (no destructive commands).
+def safe_bash(
+    cmd: str, config: RunnableConfig, cwd: str | None = None, timeout: int = DEFAULT_TIMEOUT
+) -> str:
+    """Run a shell command inside the current sandbox. cwd is relative to /workspace.
 
-    Args:
-        cmd: command string
-        cwd: optional working directory (default repo root)
-        timeout: seconds before kill
+    Files persist for this session; networking and host paths are unavailable in Docker mode.
     """
-    if enabled():
-        return "[SECURITY_BLOCKED] Host shell execution is disabled by the security policy"
-    parts = shlex.split(cmd)
-    if any(part in DISALLOWED for part in parts):
-        return "Error: disallowed command"
+    context = authorize(
+        "sandbox.execute", config, "safe_bash", {"cmd": cmd, "cwd": cwd, "timeout": timeout}
+    )
+    if cwd and cwd != ".":
+        validate_path(cwd)
+        cmd = "cd -- " + shlex.quote(cwd) + " && {\n" + cmd + "\n}"
+    from tools.sandbox.local_service import get_local_service
 
-    workdir = Path(cwd) if cwd else SAFE_DEFAULT_CWD
-    try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        out = result.stdout.strip()
-        err = result.stderr.strip()
-        if result.returncode != 0:
-            return f"[exit {result.returncode}] {out}\\n{err}"
-        return out or "(no output)"
-    except subprocess.TimeoutExpired:
-        return "Error: command timed out"
-    except Exception as e:
-        return f"Error: {e}"
+    result = get_local_service().execute(
+        context, ["/bin/sh", "-s"], stdin=cmd.encode(), timeout=timeout
+    )
+    output = result["stdout"] + result["stderr"]
+    if result["truncated"]:
+        output += "\n[output truncated]"
+    return (
+        f"[exit {result['exit_code']}] {output}"
+        if not result["success"]
+        else output or "(no output)"
+    )
