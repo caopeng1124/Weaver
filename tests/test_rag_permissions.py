@@ -80,6 +80,25 @@ def test_no_grants_skips_embedding_and_vector_search(rag_env, monkeypatch):
     assert rag_env == []
 
 
+@pytest.mark.parametrize("entrypoint", ["service", "collection", "tool"])
+def test_authorized_rag_results_preserve_private_data_boundary(rag_env, monkeypatch, entrypoint):
+    from common.security.runtime import check_outbound, private_data_present
+
+    rag, _ = upload()
+    monkeypatch.setattr(settings, "security_enabled", False)
+    with security_scope("alice", "private-rag-thread"):
+        if entrypoint == "service":
+            result = search_documents("release")
+        elif entrypoint == "collection":
+            result = rag.search("release")
+        else:
+            result = rag_search.invoke({"query": "release"})
+        assert result
+        assert private_data_present()
+        with pytest.raises(SecurityViolation, match="private_data_egress"):
+            check_outbound("tavily_search", {"query": "release notes"})
+
+
 def test_prefilter_only_includes_granted_documents(rag_env, monkeypatch):
     rag, shared_id = upload()
     _, private_id = upload(text="Other private material", filename="private.md")

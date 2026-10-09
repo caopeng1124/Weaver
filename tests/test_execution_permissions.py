@@ -115,7 +115,8 @@ def test_raw_file_and_shell_cannot_bypass_disabled_scanner(monkeypatch, tmp_path
     with security_scope("alice", "thread-a"):
         with pytest.raises(SecurityViolation):
             str_replace.invoke({"path": "note.txt", "search": "before", "replace": "after"})
-        assert "SECURITY_BLOCKED" in safe_bash.invoke({"cmd": "echo example"})
+        with pytest.raises(SecurityViolation):
+            safe_bash.invoke({"cmd": "echo example"}, config={"configurable": {"thread_id": "thread-a"}})
     assert calls == []
     assert path.read_text() == "before"
 

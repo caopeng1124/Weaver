@@ -129,6 +129,7 @@ y/
 # Runtime data
 .memory_store.json
 data/memory_store.json
+tools/data/memory_store.json
 third_party/research_refs/
 
 # Package manager locks (optional, remove if you want to commit them)

@@ -2474,6 +2474,12 @@ export interface components {
         /** SearchMode */
         SearchMode: {
             /**
+             * Autoroute
+             * @description Let the router choose how to handle the request
+             * @default false
+             */
+            autoRoute: boolean;
+            /**
              * Useagent
              * @default false
              */

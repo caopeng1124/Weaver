@@ -8,7 +8,7 @@
 
 - Python 3.11+
 - Node.js 18+（推荐配合 `pnpm`）
-- Docker & Docker Compose（可选：用于 PostgreSQL/Redis）
+- Docker Engine / Docker Desktop（使用默认的 Python、Shell 和文件执行沙箱时需要；普通聊天无需 Docker）
 - 至少 1 个 LLM API Key（OpenAI / DeepSeek / Claude 等）
 
 > 仅本地自用：通常只需要把「模型 + 搜索」相关的 key 配好即可；鉴权/多用户隔离/限流属于可选加固项（不影响开发体验）。
@@ -18,8 +18,8 @@
 ## 1) 克隆仓库
 
 ```bash
-git clone https://github.com/skygazer42/weaver.git
-cd weaver
+git clone --branch v0.7.0 https://github.com/caopeng1124/Weaver.git
+cd Weaver
 ```
 
 ---
@@ -52,8 +52,10 @@ TAVILY_API_KEY=tvly-...
 **可选但推荐**：
 
 ```bash
-# 代码执行（推荐）
-E2B_API_KEY=e2b_...
+# 默认在本机 Docker 中执行代码；云端 E2B 需显式选择
+SANDBOX_MODE=docker
+# SANDBOX_MODE=e2b
+# E2B_API_KEY=e2b_...
 
 # MCP 工具桥（更多示例见 docs/mcp.md）
 ENABLE_MCP=true
@@ -100,6 +102,17 @@ make setup-full
 ```bash
 pnpm -C web install --frozen-lockfile
 ```
+
+### Docker 执行沙箱
+
+需要代码执行或文件处理时，先启动 Docker 并构建镜像：
+
+```bash
+make sandbox-build
+make sandbox-doctor
+```
+
+聊天默认自动判断是否需要工具。导入项目或下载产物时，使用 `make sandbox-token` 的令牌连接界面的“执行沙箱”。完整说明见 [Docker 沙箱](docker-sandbox.md)。
 
 ### Playwright（可选）
 

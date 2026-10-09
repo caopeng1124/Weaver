@@ -123,7 +123,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Weaver Research Agent API",
     description="Deep  research AI agent with code execution capabilities",
-    version="0.1.0",
+    version="0.7.0",
     lifespan=lifespan,
 )
 
@@ -1256,7 +1256,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.get("/")
 async def root():
     """Health check endpoint."""
-    return {"status": "healthy", "service": "Weaver Research Agent", "version": "0.1.0"}
+    return {"status": "healthy", "service": "Weaver Research Agent", "version": app.version}
 
 
 @app.get("/health")

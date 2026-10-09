@@ -210,6 +210,7 @@ class RAGTool:
                         "chunk_id": doc.chunk_id,
                     },
                     source=f"rag:{record['id']}",
+                    private=True,
                 )
             )
         return verified
@@ -221,6 +222,7 @@ class RAGTool:
         return untrusted(
             DocumentPermissions().list_chunks(principal_id(), self.collection_name)[:limit],
             source="rag_document_list",
+            private=True,
         )
 
     def delete_document(self, source: str) -> dict[str, Any]:

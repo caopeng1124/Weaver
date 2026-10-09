@@ -26,7 +26,7 @@ def search_documents(query: str, n_results: int = 5) -> list[dict]:
     results.sort(key=lambda r: r["score"], reverse=True)
     selected = results[:n_results]
     audit("rag_retrieval", allowed_documents=len(documents), returned_chunks=len(selected))
-    return redact(selected)
+    return untrusted(redact(selected), source="rag_retrieval", private=True)
 
 
 def list_documents(limit: int = 100) -> dict:
@@ -34,7 +34,7 @@ def list_documents(limit: int = 100) -> dict:
         raise ValueError("limit must be between 1 and 1000")
     chunks = DocumentPermissions().list_chunks(principal_id())
     return untrusted(
-        {"total_chunks": len(chunks), "documents": chunks[:limit]}, source="rag_document_list"
+        {"total_chunks": len(chunks), "documents": chunks[:limit]}, source="rag_document_list", private=bool(chunks)
     )
 
 

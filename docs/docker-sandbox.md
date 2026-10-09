@@ -1,6 +1,6 @@
 # Weaver：Docker 优先的自托管执行沙箱
 
-本文对应 `codex/docker-sandbox` 的实现。默认 `SANDBOX_MODE=docker`，Python、Shell 和工作文件都在本机 Docker 任务容器中处理；E2B 仅在管理员显式设置 `SANDBOX_MODE=e2b` 时使用。Docker 出错不会自动转发任务到 E2B，也不会在宿主进程执行模型生成的代码。
+本文描述 v0.7.0 中统一的托管沙箱实现。默认 `SANDBOX_MODE=docker`，Python、Shell 和工作文件都在本机 Docker 任务容器中处理；E2B 仅在管理员显式设置 `SANDBOX_MODE=e2b` 时使用。Docker 出错不会自动转发任务到 E2B，也不会在宿主进程执行模型生成的代码。
 
 “自托管”在这里指执行环境、文件、会话管理和审计由自己的机器托管。若 Weaver 的模型、搜索或其他连接器仍使用云服务，它们仍会按各自配置发出请求；切换 Docker 不会把整个产品自动变成离线模型系统。
 
@@ -88,7 +88,7 @@ Docker 容器共享宿主 Linux 内核（Docker Desktop 使用其 Linux VM），
 
 仅真实第一方沙箱工具对象可获得对应能力；伪造同名 MCP 工具或伪造 `original` 属性不能获得权限。事件包装器向实际工具传递可信运行配置，身份不从模型参数获取。线程存在注入风险后，Agent 的沙箱调用会被拒绝；重开请求不会清除持久风险。
 
-`read_only` 档位允许列出和读取受限文件，禁止执行、上传、修改和宿主写回。`sandbox` 档位允许操作容器内副本，宿主写回仍需用户审批。即使关闭应用层安全开关，Python/Shell 也不会回退到宿主执行。
+`read_only` 档位允许列出和读取受限文件，禁止执行、上传、修改和宿主写回。`sandbox` 档位允许操作容器内副本，宿主写回仍需用户审批。`SECURITY_ENABLED=false` 只关闭内容扫描；工具身份、用户权限与单次执行许可仍强制执行，Python/Shell 始终通过沙箱运行。
 
 控制 API 额外需要 `X-Weaver-Sandbox-Token`，浏览器 Origin 也必须匹配配置。生产部署仍必须使用 Weaver 的内部 API 鉴权和可信反向代理身份；配对令牌不能替代用户认证。开发模式统一使用 `local` 用户，不提供不同浏览器用户间的身份隔离。
 
@@ -126,7 +126,7 @@ SECURITY_ENABLED=true
 
 例如需要导入项目副本时，将 `SANDBOX_WORKSPACE_ROOTS` 设置为 JSON 数组 `["/srv/weaver/workspaces/demo"]`。不要配置宿主根目录或整个用户主目录。控制目录应放在私有持久化位置，默认 `data/sandbox/` 已从 Git 排除。
 
-前端聊天顶部展开“执行沙箱”，粘贴 `make sandbox-token` 输出的令牌，连接并检查环境，然后选择空白工作区或允许导入的项目。选择 Agent 模式，直接要求分析文件或生成产物。普通对话模式本身不调用工具。令牌只保存于当前标签页的 sessionStorage；同源页面的 XSS 仍可能读取它，需要保持正常的 Web 安全措施。
+前端聊天顶部展开“执行沙箱”，粘贴 `make sandbox-token` 输出的令牌，连接并检查环境，然后选择空白工作区或允许导入的项目。直接要求分析文件或生成产物，默认自动路由会判断是否需要调用工具；需要深入研究时打开 Deep Research。令牌只保存于当前标签页的 sessionStorage；同源页面的 XSS 仍可能读取它，需要保持正常的 Web 安全措施。
 
 没有手动创建会话时，首次沙箱工具调用也会按需创建空白工作区。界面配对后可按线程找回它并下载产物。空闲超过 15 分钟停止容器；继续执行需新建聊天，已保存产物可在保留期内下载。
 

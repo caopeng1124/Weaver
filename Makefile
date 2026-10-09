@@ -1,4 +1,4 @@
-PYTHON ?= python3.11
+PYTHON ?= python3.13
 VENV_DIR ?= .venv
 VENV_BIN := $(VENV_DIR)/bin
 PY := $(VENV_BIN)/python

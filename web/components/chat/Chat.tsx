@@ -22,7 +22,7 @@ import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { BrowserViewer } from './BrowserViewer'
 import { SecurityApprovalCard } from './SecurityApprovalCard'
 import { LocalSandboxPanel } from './LocalSandboxPanel'
-import { getApiBaseUrl } from '@/lib/api'
+import { fetchPublicConfig } from '@/lib/publicConfig'
 import { ChatMode } from '@/lib/chatMode'
 
 export function Chat() {
@@ -30,9 +30,9 @@ export function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sandboxMode, setSandboxMode] = useState('none')
   useEffect(() => {
-    fetch(`${getApiBaseUrl()}/api/config`).then(response => response.json()).then(config => {
-      setSandboxMode(config.features?.sandbox_mode || 'none')
-    }).catch(() => {})
+    fetchPublicConfig().then(config => {
+      setSandboxMode(config?.features?.sandbox_mode || 'none')
+    })
   }, [])
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL)
   const [searchMode, setSearchMode] = useState<ChatMode>('auto')

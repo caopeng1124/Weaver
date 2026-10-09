@@ -384,12 +384,14 @@ async def test_control_api_review_apply_download_and_stop(local_env):
         assert (await client.get(prefix)).json()["state"] == "stopped"
 
 
+@pytest.mark.parametrize("scanner_enabled", [False, True])
 @pytest.mark.parametrize("evented", [False, True])
 @pytest.mark.parametrize(
     "target,args",
     [(execute_python_code, {"code": "print(1)"}), (safe_bash, {"cmd": "printf test"})],
 )
-def test_tools_use_persisted_identity_and_sandbox(local_env, evented, target, args):
+def test_tools_use_persisted_identity_and_sandbox(local_env, monkeypatch, scanner_enabled, evented, target, args):
+    monkeypatch.setattr(settings, "security_enabled", scanner_enabled)
     service, provider, _, session = local_env
     wrapped = SecureTool(EventedTool(target, thread_id=session["thread"]) if evented else target)
     with security_scope("alice", session["thread"]):
@@ -445,6 +447,48 @@ def test_direct_call_and_tool_spoofing_fail_closed(local_env):
         raise AssertionError("executed")
 
     assert "SECURITY_BLOCKED" in SecureTool(fake).invoke({"cmd": "true"})
+    assert not provider.calls
+
+
+@pytest.mark.parametrize("changed", ["principal", "run", "arguments", "policy", "replay"])
+def test_sandbox_permits_remain_bound_with_scanner_disabled(local_env, monkeypatch, changed):
+    from common.security.context import active_call, current_context
+    from common.security.gateway import prepare
+
+    _, provider, _, session = local_env
+    monkeypatch.setattr(settings, "security_enabled", False)
+    cfg = {"configurable": {"thread_id": session["thread"]}}
+    with security_scope("alice", session["thread"]):
+        args, token = prepare(execute_python_code, {"code": "print(1)"}, cfg)
+        try:
+            if changed == "principal":
+                with security_scope("mallory", session["thread"]), pytest.raises(SecurityViolation):
+                    execute_python_code.invoke(args, config=cfg)
+            else:
+                if changed == "run":
+                    current_context.get().run_id = "another-run"
+                elif changed == "arguments":
+                    args = {"code": "print(2)"}
+                elif changed == "policy":
+                    monkeypatch.setattr(
+                        settings, "security_principal_policies", '{"alice":{"tools":[]}}'
+                    )
+                elif changed == "replay":
+                    execute_python_code.invoke(args, config=cfg)
+                with pytest.raises(SecurityViolation):
+                    execute_python_code.invoke(args, config=cfg)
+        finally:
+            active_call.reset(token)
+    assert len(provider.calls) == (1 if changed == "replay" else 0)
+
+
+def test_raw_sandbox_call_cannot_bypass_disabled_scanner(local_env, monkeypatch):
+    _, provider, _, session = local_env
+    monkeypatch.setattr(settings, "security_enabled", False)
+    with security_scope("alice", session["thread"]), pytest.raises(SecurityViolation):
+        execute_python_code.invoke(
+            {"code": "print(1)"}, config={"configurable": {"thread_id": session["thread"]}}
+        )
     assert not provider.calls
 
 

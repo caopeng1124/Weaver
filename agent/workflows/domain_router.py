@@ -47,12 +47,12 @@ class DomainClassification:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "domain": self.domain.value,
-            "confidence": self.confidence,
-            "reasoning": self.reasoning,
-            "search_hints": self.search_hints,
-            "suggested_sources": self.suggested_sources,
-            "language_hints": self.language_hints,
+            "domain": self.domain.value,       # 分类结果
+            "confidence": self.confidence,      # 置信度
+            "reasoning": self.reasoning,        # 原因
+            "search_hints": self.search_hints,  # 搜索建议
+            "suggested_sources": self.suggested_sources,     # 推荐网站
+            "language_hints": self.language_hints,           # 专业术语
         }
 
 

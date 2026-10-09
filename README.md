@@ -11,7 +11,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat&logo=fastapi&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-16.1+-000000?style=flat&logo=next.js&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-14.2-000000?style=flat&logo=next.js&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-1.0+-7B68EE?style=flat&logo=databricks&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat)
@@ -23,6 +23,10 @@
 </div>
 
 ---
+
+## v0.7.0 整合版本
+
+本版本合并了简化聊天界面与自动路由、统一模型上下文、工具权限、Docker 托管沙箱和 RAG 文档权限。普通聊天自动选择直答、搜索或工具，界面只保留 Deep Research 开关。升级与验证记录见 [v0.7.0 版本说明](docs/releases/v0.7.0.md)。
 
 ## 你能用 Weaver 做什么
 
@@ -62,8 +66,8 @@ graph TB
 > 更完整的步骤（E2B / Playwright / MCP / Docker Compose）见：`docs/getting-started.md`
 
 ```bash
-git clone https://github.com/skygazer42/weaver.git
-cd weaver
+git clone --branch v0.7.0 https://github.com/caopeng1124/Weaver.git
+cd Weaver
 
 # 1) 配置环境变量
 cp .env.example .env
