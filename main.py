@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import hashlib
 import hmac
 import json
 import logging
@@ -74,7 +73,7 @@ from common.metrics import metrics_registry
 from common.proxy_env import normalize_socks_proxy_env
 from common.security.content import redact, redact_text
 from common.security.context import SecurityContext, current_context
-from common.security.runtime import untrusted
+from common.security.runtime import SecurityViolation, untrusted
 from common.security.store import ApprovalError, SecurityStore
 from common.sse import (
     format_sse_event,
@@ -296,6 +295,8 @@ async def log_requests(request: Request, call_next):
                 },
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        elif internal_key and path.startswith("/api/documents") and not principal_id:
+            response = JSONResponse(status_code=401, content={"detail": "A trusted user identity is required"})
         elif settings.app_env in {"prod", "production"} and not internal_key and path.startswith("/api/"):
             response = JSONResponse(status_code=503, content={"detail": "Production security requires trusted API authentication"})
         else:
@@ -3628,14 +3629,31 @@ def _rag_collection_for_request(request: Request) -> str:
     - Default/dev (internal auth disabled): single shared collection
     - Enterprise internal (internal auth enabled): per-principal isolated collection
     """
-    base = (getattr(settings, "rag_collection_name", "") or "weaver_documents").strip() or "weaver_documents"
-    internal_key = (getattr(settings, "internal_api_key", "") or "").strip()
-    if not internal_key:
-        return base
+    from tools.rag.permissions import collection_for, principal_id
 
-    principal_id = (getattr(request.state, "principal_id", "") or "").strip() or "internal"
-    suffix = hashlib.sha256(principal_id.encode("utf-8")).hexdigest()[:12]
-    return f"{base}__u_{suffix}"
+    return collection_for(principal_id())
+
+
+class DocumentPermissionsUpdate(BaseModel):
+    readers: list[str] = Field(max_length=100)
+
+
+@app.put("/api/documents/permissions/{document_id}")
+async def update_document_permissions(document_id: str, payload: DocumentPermissionsUpdate):
+    """Replace the reader grant set. Only the authenticated document owner can do this."""
+    if not settings.rag_enabled:
+        raise HTTPException(status_code=400, detail="RAG is not enabled")
+    from tools.rag.service import set_document_readers
+
+    try:
+        return set_document_readers(document_id, payload.readers)
+    except SecurityViolation as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        logger.error("Document permission update failed", exc_info=True)
+        raise HTTPException(status_code=503, detail="Document permissions are unavailable") from error
 
 
 @app.post("/api/documents/upload")
@@ -3673,18 +3691,21 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Upload failed"))
 
-        return {
+        return redact({
             "success": True,
+            "document_id": result.get("document_id"),
             "filename": file.filename,
             "chunks": result.get("chunks", 0),
             "message": f"Document '{file.filename}' uploaded successfully with {result.get('chunks', 0)} chunks",
-        }
+        })
 
+    except SecurityViolation as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Document upload error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="Document storage is unavailable") from e
 
 
 @app.get("/api/documents/list")
@@ -3696,23 +3717,17 @@ async def list_documents(request: Request, limit: int = 100):
         raise HTTPException(status_code=400, detail="RAG is not enabled.")
 
     try:
-        from tools.rag.rag_tool import get_rag_tool
+        from tools.rag.service import list_documents as list_accessible_documents
 
-        rag = get_rag_tool(collection_name=_rag_collection_for_request(request))
-        if rag is None:
-            raise HTTPException(status_code=500, detail="Failed to initialize RAG tool")
+        return list_accessible_documents(limit)
 
-        documents = rag.list_documents(limit=limit)
-        count = rag.count()
-
-        return {
-            "total_chunks": count,
-            "documents": documents,
-        }
-
+    except SecurityViolation as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as e:
         logger.error(f"List documents error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="Document permissions are unavailable") from e
 
 
 @app.delete("/api/documents/{source:path}")
@@ -3734,13 +3749,15 @@ async def delete_document(source: str, request: Request):
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Delete failed"))
 
-        return {"success": True, "message": f"Document '{source}' deleted"}
+        return redact({"success": True, "message": f"Document '{source}' deleted"})
 
+    except SecurityViolation as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Delete document error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="Document deletion failed; access remains revoked") from e
 
 
 @app.post("/api/documents/search")
@@ -3752,22 +3769,22 @@ async def search_documents(request: Request, query: str, n_results: int = 5):
         raise HTTPException(status_code=400, detail="RAG is not enabled.")
 
     try:
-        from tools.rag.rag_tool import get_rag_tool
+        from tools.rag.service import search_documents as search_accessible_documents
 
-        rag = get_rag_tool(collection_name=_rag_collection_for_request(request))
-        if rag is None:
-            raise HTTPException(status_code=500, detail="Failed to initialize RAG tool")
+        results = search_accessible_documents(query, n_results=n_results)
 
-        results = rag.search(query, n_results=n_results)
-
-        return {
+        return redact({
             "query": query,
             "results": results,
-        }
+        })
 
+    except SecurityViolation as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as e:
         logger.error(f"Search documents error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="Document search is unavailable") from e
 
 
 # ==================== Sessions API ====================

@@ -5,9 +5,8 @@ Stores and retrieves document embeddings using ChromaDB.
 """
 
 import logging
-import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from tools.rag.document_loader import Document
 
@@ -17,6 +16,7 @@ logger = logging.getLogger(__name__)
 try:
     import chromadb
     from chromadb.config import Settings
+
     CHROMADB_AVAILABLE = True
 except ImportError:
     chromadb = None
@@ -36,8 +36,8 @@ class VectorStore:
     def __init__(
         self,
         collection_name: str = "weaver_documents",
-        persist_directory: Optional[str] = None,
-        embedding_function: Optional[Any] = None,
+        persist_directory: str | None = None,
+        embedding_function: Any | None = None,
     ):
         """
         Initialize the vector store.
@@ -49,8 +49,7 @@ class VectorStore:
         """
         if not CHROMADB_AVAILABLE:
             raise ImportError(
-                "chromadb is required for vector storage. "
-                "Install with: pip install chromadb"
+                "chromadb is required for vector storage. Install with: pip install chromadb"
             )
 
         self.collection_name = collection_name
@@ -79,9 +78,9 @@ class VectorStore:
 
     def add_documents(
         self,
-        documents: List[Document],
-        embeddings: Optional[List[List[float]]] = None,
-    ) -> List[str]:
+        documents: list[Document],
+        embeddings: list[list[float]] | None = None,
+    ) -> list[str]:
         """
         Add documents to the vector store.
 
@@ -126,10 +125,10 @@ class VectorStore:
     def search(
         self,
         query: str,
-        query_embedding: Optional[List[float]] = None,
+        query_embedding: list[float] | None = None,
         n_results: int = 5,
-        filter_metadata: Optional[Dict[str, Any]] = None,
-    ) -> List[Tuple[Document, float]]:
+        filter_metadata: dict[str, Any] | None = None,
+    ) -> list[tuple[Document, float]]:
         """
         Search for similar documents.
 
@@ -169,7 +168,9 @@ class VectorStore:
             distances = results["distances"][0] if results.get("distances") else [0.0] * len(docs)
             ids = results["ids"][0] if results.get("ids") else [""] * len(docs)
 
-            for i, (text, metadata, distance, doc_id) in enumerate(zip(docs, metadatas, distances, ids)):
+            for text, metadata, distance, doc_id in zip(
+                docs, metadatas, distances, ids, strict=True
+            ):
                 # Convert distance to similarity score (cosine distance -> similarity)
                 score = 1.0 - distance
 
@@ -184,8 +185,8 @@ class VectorStore:
 
     def delete_documents(
         self,
-        ids: Optional[List[str]] = None,
-        filter_metadata: Optional[Dict[str, Any]] = None,
+        ids: list[str] | None = None,
+        filter_metadata: dict[str, Any] | None = None,
     ) -> int:
         """
         Delete documents from the vector store.
@@ -197,19 +198,15 @@ class VectorStore:
         Returns:
             Number of documents deleted
         """
-        try:
-            if ids:
-                self.collection.delete(ids=ids)
-                return len(ids)
-            elif filter_metadata:
-                self.collection.delete(where=filter_metadata)
-                return -1  # Unknown count
-            return 0
-        except Exception as e:
-            logger.error(f"Delete error: {e}")
-            return 0
+        if ids:
+            self.collection.delete(ids=ids)
+            return len(ids)
+        if filter_metadata:
+            self.collection.delete(where=filter_metadata)
+            return -1  # Unknown count
+        return 0
 
-    def get_document(self, doc_id: str) -> Optional[Document]:
+    def get_document(self, doc_id: str) -> Document | None:
         """
         Get a specific document by ID.
 
@@ -235,7 +232,7 @@ class VectorStore:
         self,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         List documents in the store.
 
@@ -257,10 +254,12 @@ class VectorStore:
             if result and result.get("ids"):
                 for i, doc_id in enumerate(result["ids"]):
                     metadata = result["metadatas"][i] if result.get("metadatas") else {}
-                    documents.append({
-                        "id": doc_id,
-                        **metadata,
-                    })
+                    documents.append(
+                        {
+                            "id": doc_id,
+                            **metadata,
+                        }
+                    )
             return documents
 
         except Exception as e:
