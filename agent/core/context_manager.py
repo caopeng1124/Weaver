@@ -19,8 +19,8 @@ Usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import tiktoken
 from langchain_core.messages import (
@@ -540,7 +540,7 @@ class ContextManager:
 
         # Create new message of same type
         if isinstance(message, SystemMessage):
-            return SystemMessage(content=truncated_content)
+            return message.model_copy(update={"content": truncated_content}, deep=True)
         elif isinstance(message, HumanMessage):
             return HumanMessage(content=truncated_content)
         elif isinstance(message, AIMessage):

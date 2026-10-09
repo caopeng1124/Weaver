@@ -9,7 +9,6 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import (
     ClearToolUsesEdit,
     ContextEditingMiddleware,
-    HumanInTheLoopMiddleware,
     TodoListMiddleware,
     ToolCallLimitMiddleware,
     ToolRetryMiddleware,
@@ -86,7 +85,7 @@ def _build_todo_middleware() -> TodoListMiddleware:
 
 
 def _build_middlewares() -> List:
-    mws: List = [SecurityMiddleware()] if settings.security_enabled else []
+    mws: List = [SecurityMiddleware()]
 
     # Tool selector
     if settings.tool_selector:
@@ -148,33 +147,6 @@ def _build_middlewares() -> List:
     if settings.enable_todo_middleware:
         mws.append(_build_todo_middleware())
 
-    # Human-in-the-loop for risky tools
-    if settings.tool_approval and not settings.security_enabled:
-        # Apply to high-impact tools by default.
-        interrupt_cfg = {
-            "execute_python_code": True,
-            # Lightweight browser tools (network + navigation)
-            "browser_search": True,
-            "browser_navigate": True,
-            "browser_click": True,
-            # Sandbox browser tools (network + navigation)
-            "sb_browser_navigate": True,
-            "sb_browser_click": True,
-            "sb_browser_type": True,
-            "sb_browser_press": True,
-            "sb_browser_scroll": True,
-            "sb_browser_extract_text": True,
-            "sb_browser_screenshot": True,
-            # Crawling helpers (network fetch)
-            "crawl_url": True,
-            "crawl_urls": True,
-        }
-        mws.append(
-            HumanInTheLoopMiddleware(
-                interrupt_on=interrupt_cfg,
-                description_prefix="Tool execution pending approval",
-            )
-        )
 
     return mws
 

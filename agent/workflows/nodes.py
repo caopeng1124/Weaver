@@ -7,12 +7,17 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Send, interrupt
 from pydantic import BaseModel, Field
 
+from agent.core.context_builder import (
+    AgentPromptOptions,
+    ContextBlock,
+    ContextPrompt,
+    build_context,
+)
 from agent.core.events import ToolEventType, get_emitter_sync
 from agent.core.middleware import enforce_tool_call_limit, retry_call
 from agent.core.state import AgentState, QueryState
@@ -398,33 +403,12 @@ def _answer_simple_agent_query(
     if not evidence:
         return None
 
-    messages: List[Any] = []
-    for seeded in state.get("messages") or []:
-        if isinstance(seeded, SystemMessage):
-            messages.append(seeded)
-
-    messages.append(
-        SystemMessage(
-            content=(
-                "You are Weaver in fast verification mode. "
-                "You already have current web evidence. "
-                "Answer the user's question directly using only the provided evidence. "
-                "Prefer the most authoritative and consistent evidence. "
-                "If the request is a comparison, compare only the specific dimension the user asked for and do not introduce adjacent metrics. "
-                "Keep the answer concise. If the user requested an exact reply format, follow it exactly. "
-                "Do not add a sources section unless the user explicitly asked for it."
-            )
-        )
-    )
-    messages.append(
-        HumanMessage(
-            content=(
-                f"User question:\n{user_input}\n\n"
-                f"Search query used:\n{search_query}\n\n"
-                f"Current search evidence:\n{evidence}\n\n"
-                "Return the best final answer."
-            )
-        )
+    messages = build_context(
+        "fast_search",
+        user=user_input,
+        history=state.get("messages") or [],
+        preferences=(_configurable(config).get("agent_profile") or {}).get("system_prompt", ""),
+        data=[ContextBlock("search_evidence", {"query": search_query, "results": evidence})],
     )
 
     llm = _chat_model(_model_for_task("writing", config), temperature=0.2)
@@ -1148,22 +1132,15 @@ def clarify_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
             default="", description="A brief confirmation to proceed when clear."
         )
 
-    system_msg = SystemMessage(
-        content=(
-            "You are a safety check that decides if the user's request needs clarification before research.\n"
-            "If the ask is ambiguous, missing key details, or multi-intent, set need_clarification=true and propose ONE concise question.\n"
-            "Otherwise, set need_clarification=false and provide a short confirmation to proceed."
-        )
-    )
-    human_msg = HumanMessage(
-        content=_build_user_content(state.get("input", ""), state.get("images"))
+    messages = build_context(
+        "clarify", user=_build_user_content(state.get("input", ""), state.get("images"))
     )
 
     try:
         response = (
             llm.with_structured_output(ClarifyResponse)
             .with_retry(stop_after_attempt=2)
-            .invoke([system_msg, human_msg], config=config)
+            .invoke(messages, config=config)
         )
         _log_usage(response, "clarify")
     except Exception as e:
@@ -1192,10 +1169,9 @@ def direct_answer_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
     logger.info("Executing direct answer node")
     t0 = time.time()
     llm = _chat_model(_model_for_task("writing", config), temperature=0.7)
-    messages = [
-        SystemMessage(content="You are a helpful assistant. Answer succinctly and accurately."),
-        HumanMessage(content=_build_user_content(state["input"], state.get("images"))),
-    ]
+    messages = build_context(
+        "direct", user=_build_user_content(state["input"], state.get("images"))
+    )
     response = llm.invoke(messages, config=config)
     _log_usage(response, "direct_answer")
     logger.info(f"[timing] direct_answer {(time.time() - t0):.3f}s")
@@ -1256,15 +1232,14 @@ def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
             queries: List[str] = Field(description="3-7 targeted search queries")
             reasoning: str = Field(description="Brief explanation of the research strategy")
 
-        system_msg = SystemMessage(
-            content="You are an expert research planner. Return JSON with 3-7 targeted search queries and a brief reasoning."
+        messages = build_context(
+            "planner", user=_build_user_content(state["input"], state.get("images"))
         )
-        human_msg = HumanMessage(content=_build_user_content(state["input"], state.get("images")))
 
         response = (
             llm.with_structured_output(PlanResponse)
             .with_retry(stop_after_attempt=2)
-            .invoke([system_msg, human_msg], config=config)
+            .invoke(messages, config=config)
         )
 
         # LLM 调用后检查取消状态
@@ -1637,26 +1612,7 @@ def refine_plan_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any
         )
         t0 = time.time()
 
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """You are a research strategist. Generate up to 3 follow-up search queries to close the gaps called out in feedback.
-
-Rules:
-- Target missing evidence, data, or counterpoints.
-- Avoid repeating prior queries unless wording needs to be more specific.
-- Keep queries concise and specific.
-
-Return ONLY a JSON object:
-{"queries": ["q1", "q2", ...]}""",
-                ),
-                (
-                    "human",
-                    "Question: {question}\nFeedback: {feedback}\nExisting queries: {existing}",
-                ),
-            ]
-        )
+        prompt = ContextPrompt('followup', 'Question: {question}\nFeedback: {feedback}\nExisting queries: {existing}')
 
         try:
             response = llm.invoke(
@@ -1770,59 +1726,21 @@ def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
         agent = build_tool_agent(model=model, tools=tools, temperature=0.7)
         t0 = time.time()
 
-        # Build enhanced system prompt with context
-        from agent.prompts.system_prompts import get_agent_prompt
-
-        profile_prompt_pack = profile.get("prompt_pack")
-        profile_prompt_variant = profile.get("prompt_variant", "full")
-
-        enhanced_system_prompt = get_agent_prompt(
-            mode="agent",
-            context={
-                "current_time": datetime.now(),
-                "enabled_tools": [tool.__class__.__name__ for tool in tools] if tools else [],
-                "prompt_pack": profile_prompt_pack,
-                "prompt_variant": profile_prompt_variant,
-            },
-        )
         browser_hint = None
         if profile.get("browser_context_helper", settings.enable_browser_context_helper):
             browser_hint = build_browser_context_hint(thread_id)
-
-        # Add XML tool calling instruction if enabled
-        if ENHANCED_TOOLS_AVAILABLE and getattr(settings, "agent_xml_tool_calling", False):
-            xml_instruction = """\n\nXML Tool Calling Format (optional):
-You can also use XML format for tool calls:
-<function_calls>
-<invoke name="tool_name">
-<parameter name="param1">value1</parameter>
-<parameter name="param2">value2</parameter>
-</invoke>
-</function_calls>"""
-            enhanced_system_prompt += xml_instruction
-
-        # Build messages list with enhanced system prompt
-        messages: List[Any] = []
-
-        # Check if there's already a system message in seeded messages
-        seeded = state.get("messages") or []
-        has_system_msg = False
-        if isinstance(seeded, list):
-            for msg in seeded:
-                if isinstance(msg, SystemMessage):
-                    has_system_msg = True
-                    break
-            messages.extend(seeded)
-
-        # Add enhanced system prompt if no system message exists
-        if not has_system_msg:
-            messages.insert(0, SystemMessage(content=enhanced_system_prompt))
-
-        if browser_hint:
-            messages.append(SystemMessage(content=browser_hint))
-
-        messages.append(
-            HumanMessage(content=_build_user_content(state.get("input", ""), state.get("images")))
+        messages = build_context(
+            "agent",
+            user=_build_user_content(state.get("input", ""), state.get("images")),
+            history=state.get("messages") or [],
+            preferences=profile.get("system_prompt", ""),
+            data=[ContextBlock("browser", browser_hint)] if browser_hint else [],
+            agent_options=AgentPromptOptions(
+                prompt_pack=profile.get("prompt_pack"),
+                prompt_variant=profile.get("prompt_variant", "full"),
+                deep_research=bool((cfg.get("search_mode") or {}).get("use_deep_prompt")),
+                xml_tools=bool(ENHANCED_TOOLS_AVAILABLE and getattr(settings, "agent_xml_tool_calling", False)),
+            ),
         )
 
         response = agent.invoke({"messages": messages}, config=config)
@@ -2004,27 +1922,17 @@ def writer_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
             f"tiers: {len(aggregated.tier_1)}/{len(aggregated.tier_2)}/{len(aggregated.tier_3)}"
         )
 
-        # Use enhanced writer prompt
-        from agent.prompts.system_prompts import get_writer_prompt
-
-        writer_system_prompt = get_writer_prompt()
-
-        messages: List[Any] = [
-            SystemMessage(content=writer_system_prompt),
-            HumanMessage(content=_build_user_content(state["input"], state.get("images"))),
-        ]
-
-        human_guidance = state.get("human_guidance")
-        if isinstance(human_guidance, str) and human_guidance.strip():
-            messages.append(
-                HumanMessage(content=f"User guidance (HITL):\n{human_guidance.strip()}")
-            )
-        if research_context:
-            messages.append(
-                HumanMessage(
-                    content=f"Research context:\n{research_context}\n\nSources:\n{sources_table}"
-                )
-            )
+        guidance = state.get("human_guidance")
+        history = []
+        if isinstance(guidance, str) and guidance.strip():
+            history.append(HumanMessage(content=f"User guidance (HITL):\n{guidance.strip()}"))
+        messages = build_context(
+            "writer",
+            user=_build_user_content(state["input"], state.get("images")),
+            history=history,
+            data=[ContextBlock("research", {"context": research_context, "sources": sources_table})]
+            if research_context else [],
+        )
 
         if use_tools and agent is not None:
             response = agent.invoke({"messages": messages}, config=config)
@@ -2143,48 +2051,7 @@ def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
             default_factory=list, description="Search queries that would help fill gaps"
         )
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are a strict report evaluator. Assess the report across multiple dimensions.
-
-## Evaluation Criteria:
-
-1. **Coverage** (0-1): Does the report fully address the question?
-   - 1.0: All aspects covered comprehensively
-   - 0.7+: Most aspects covered, minor gaps
-   - 0.5: Partial coverage, notable gaps
-   - <0.5: Major aspects missing
-
-2. **Accuracy** (0-1): Are claims properly sourced?
-   - 1.0: All claims cited with source tags
-   - 0.7+: Most claims sourced
-   - 0.5: Mixed sourcing
-   - <0.5: Unsupported claims
-
-3. **Freshness** (0-1): Is the information current?
-   - 1.0: Up-to-date, recent sources
-   - 0.7+: Mostly current
-   - 0.5: Some outdated info
-   - <0.5: Significantly outdated
-
-4. **Coherence** (0-1): Is it well-organized?
-   - 1.0: Clear structure, logical flow
-   - 0.7+: Good organization
-   - 0.5: Some structural issues
-   - <0.5: Disorganized
-
-## Verdict Rules:
-- "pass": All dimensions >= 0.7 and no critical gaps
-- "revise": Any dimension 0.5-0.7 or minor gaps
-- "incomplete": Any dimension < 0.5 or major missing topics
-
-Provide specific, actionable feedback and search queries to address gaps.""",
-            ),
-            ("human", "Question:\n{question}\n\nReport:\n{report}"),
-        ]
-    )
+    prompt = ContextPrompt('evaluator', 'Question:\n{question}\n\nReport:\n{report}')
 
     report = state.get("draft_report") or state.get("final_report", "")
 
@@ -2418,19 +2285,7 @@ def revise_report_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
     """Revise the report based on evaluator feedback."""
     logger.info("Executing revise report node")
     llm = _chat_model(_model_for_task("writing", config), temperature=0.5)
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are a helpful editor. Revise the report using the feedback.
-Keep the structure clear and improve factual accuracy and clarity.""",
-            ),
-            (
-                "human",
-                "Question:\n{question}\n\nFeedback:\n{feedback}\n\nCurrent report:\n{report}",
-            ),
-        ]
-    )
+    prompt = ContextPrompt('editor', 'Question:\n{question}\n\nFeedback:\n{feedback}\n\nCurrent report:\n{report}')
 
     report = state.get("draft_report") or state.get("final_report", "")
     feedback = state.get("evaluation", "")

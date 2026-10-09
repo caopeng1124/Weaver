@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from common.config import settings
-from common.security.content import redact
+from common.security.content import redact_sensitive as redact
 
 
 class ApprovalError(ValueError):
@@ -109,6 +109,17 @@ class SecurityStore:
                 db.execute(
                     """SELECT 1 FROM security_events WHERE principal=? AND thread=?
                 AND json_extract(payload, '$.event')='injection_detected' LIMIT 1""",
+                    (principal, thread),
+                ).fetchone()
+                is not None
+            )
+
+    def has_private_data(self, principal: str, thread: str) -> bool:
+        with self.connect() as db:
+            return (
+                db.execute(
+                    "SELECT 1 FROM security_events WHERE principal=? AND thread=? "
+                    "AND json_extract(payload, '$.event')='private_data_loaded' LIMIT 1",
                     (principal, thread),
                 ).fetchone()
                 is not None

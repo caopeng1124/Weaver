@@ -36,6 +36,7 @@ def security_config(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "security_store_path", str(tmp_path / "ledger.sqlite3"))
     monkeypatch.setattr(settings, "security_allowed_domains", "")
     monkeypatch.setattr(settings, "security_mcp_tools", "{}")
+    monkeypatch.setattr(settings, "security_principal_policies", "{}")
     token = current_context.set(None)
     yield
     current_context.reset(token)
@@ -350,7 +351,11 @@ def test_agent_middleware_and_event_wrapper_share_one_approval(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_http_approval_owner_replay_and_audit_isolation(monkeypatch, tmp_path):
+@pytest.mark.parametrize("scanner_enabled", [True, False])
+async def test_http_approval_owner_replay_and_audit_isolation(
+    monkeypatch, tmp_path, scanner_enabled
+):
+    monkeypatch.setattr(settings, "security_enabled", scanner_enabled)
     from httpx import ASGITransport, AsyncClient
 
     import main
@@ -466,7 +471,9 @@ def test_mcp_defaults_deny_and_configured_policy_ignores_remote_hints(monkeypatc
     assert evaluate("mcp_demo_read", {}, risk=True).action == "deny"
 
 
-def test_memory_identity_cannot_be_supplied_by_the_model(monkeypatch):
+@pytest.mark.parametrize("scanner_enabled", [True, False])
+def test_memory_identity_cannot_be_supplied_by_the_model(monkeypatch, scanner_enabled):
+    monkeypatch.setattr(settings, "security_enabled", scanner_enabled)
     from tools.core.memory_client import _normalize_user_id
 
     monkeypatch.setattr(settings, "internal_api_key", "test-internal-key")
@@ -531,14 +538,15 @@ async def test_mcp_permit_is_exact_and_output_is_sanitized(monkeypatch):
 
 def test_file_execution_permit_cannot_be_reused_or_follow_hardlinks(tmp_path):
     from common.security.context import ExecutionPermit, active_call
-    from common.security.policy import digest, resource_version
+    from common.security.gateway import execution_key
+    from common.security.policy import resource_version
     from tools.automation.str_replace_tool import str_replace
 
     path = tmp_path / "note.txt"
     path.write_text("before")
     args = {"path": "note.txt", "search": "before", "replace": "after", "encoding": "utf-8"}
     permit = ExecutionPermit(
-        digest({"tool": "str_replace", "args": args}),
+        execution_key(str_replace, args),
         resource_version(evaluate("str_replace", args)),
     )
     token = active_call.set(permit)
@@ -562,14 +570,15 @@ def test_file_execution_permit_cannot_be_reused_or_follow_hardlinks(tmp_path):
 
 def test_file_recheck_uses_open_descriptor(tmp_path):
     from common.security.context import ExecutionPermit, active_call
-    from common.security.policy import digest, resource_version
+    from common.security.gateway import execution_key
+    from common.security.policy import resource_version
     from tools.automation.str_replace_tool import str_replace
 
     path = tmp_path / "note.txt"
     path.write_text("before")
     args = {"path": "note.txt", "search": "before", "replace": "after", "encoding": "utf-8"}
     permit = ExecutionPermit(
-        digest({"tool": "str_replace", "args": args}),
+        execution_key(str_replace, args),
         resource_version(evaluate("str_replace", args)),
     )
     path.write_text("concurrent edit")

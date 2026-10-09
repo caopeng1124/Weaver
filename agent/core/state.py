@@ -1,7 +1,7 @@
 import operator
 from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
 
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 from agent.core.message_utils import summarize_messages

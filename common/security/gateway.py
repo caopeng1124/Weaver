@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool
 from langgraph.types import interrupt
 
 from common.config import settings
-from common.security.content import enabled, redact
+from common.security.content import redact_sensitive as redact
 from common.security.context import (
     ExecutionPermit,
     SecurityContext,
@@ -16,21 +16,34 @@ from common.security.context import (
     call_id,
     current_context,
 )
-from common.security.policy import digest, evaluate, resource_version
-from common.security.runtime import SecurityViolation, audit, untrusted
+from common.security.permissions import current_scope
+from common.security.policy import NETWORK_TOOLS, digest, evaluate, resource_version
+from common.security.runtime import (
+    SecurityViolation,
+    audit,
+    private_data_present,
+    risk_present,
+    untrusted,
+)
 from common.security.store import ApprovalError, SecurityStore
 
 
-def _context(config: RunnableConfig | None) -> SecurityContext:
+def execution_context(config: RunnableConfig | None) -> SecurityContext:
     ctx = current_context.get()
     if ctx is None:
         if settings.internal_api_key or settings.app_env in {"prod", "production"}:
             raise SecurityViolation("Trusted execution identity is required")
-        ctx = SecurityContext(principal="local")
+        try:
+            ctx = SecurityContext(principal="local")
+        except (ValueError, TypeError) as error:
+            raise SecurityViolation("Invalid execution policy") from error
         current_context.set(ctx)
     thread = str((config or {}).get("configurable", {}).get("thread_id") or ctx.thread_id)
     if ctx.thread_id and thread and ctx.thread_id != thread:
         raise SecurityViolation("Execution thread does not match its security context")
+    if thread and not ctx.thread_id and ctx.private_data_seen:
+        ctx.thread_id = thread
+        audit("private_data_loaded", source="request_context")
     ctx.thread_id = thread
     return ctx
 
@@ -62,29 +75,109 @@ def tool_identity(tool: BaseTool) -> str:
             "schema": schema,
             "implementation": type(tool).__module__ + "." + type(tool).__qualname__,
             "server": getattr(tool, "server_fingerprint", ""),
+            "remote_name": getattr(tool, "original_name", ""),
+            "function": [
+                (getattr(function, "__module__", ""), getattr(function, "__qualname__", ""))
+                for function in (getattr(tool, "func", None), getattr(tool, "coroutine", None))
+            ],
         }
     )
 
 
+def policy_binding() -> dict:
+    try:
+        scope = current_scope().as_dict()
+    except (ValueError, TypeError) as error:
+        raise SecurityViolation("Invalid execution policy") from error
+    return {
+        "version": settings.security_policy_version,
+        "scope": scope,
+        "mcp_tools": settings.security_mcp_tools,
+        "private_data": private_data_present(),
+        "risk": risk_present(),
+    }
+
+
+def execution_key(tool, args, context=None):
+    context = context or execution_context(None)
+    return digest(
+        {
+            "principal": context.principal,
+            "thread": context.thread_id,
+            "run": context.run_id,
+            "tool": tool_identity(tool),
+            "args": args,
+            "policy": policy_binding(),
+        }
+    )
+
+
+def outbound_key(tool, args):
+    context = execution_context(None)
+    return digest(
+        {
+            "principal": context.principal,
+            "thread": context.thread_id,
+            "run": context.run_id,
+            "tool": tool,
+            "args": args,
+            "policy": policy_binding(),
+        }
+    )
+
+
+def consume_execution_permit(tool, args):
+    context = execution_context(None)
+    permit = active_call.get()
+    decision = evaluate(tool.name, args, risk=risk_present(), private_data=private_data_present())
+    if (
+        decision.action == "deny"
+        or permit is None
+        or not permit.consume(execution_key(tool, args, context))
+    ):
+        raise SecurityViolation(
+            "Execution requires permission for this identity, tool and exact arguments"
+        )
+    return permit
+
+
+def _permit(tool, args, context, version=""):
+    outbound = None
+    if tool.name in NETWORK_TOOLS:
+        values = {key: args[key] for key in ("query", "url", "urls") if key in args}
+        operation = (
+            "crawl_urls"
+            if "urls" in values
+            else "crawl_url"
+            if "url" in values
+            else "tavily_search"
+        )
+        outbound = {"tool": operation, "args": values}
+    return ExecutionPermit(
+        execution_key(tool, args, context),
+        version,
+        outbound=outbound,
+        outbound_key=outbound_key(outbound["tool"], outbound["args"]) if outbound else "",
+    )
+
+
 def prepare(tool: BaseTool, args: dict, config: RunnableConfig | None) -> tuple[dict, Token | None]:
-    if not enabled():
-        return args, None
     try:
         args = _validated_args(tool, args)
     except ValueError as error:
         raise SecurityViolation("Tool arguments do not match the input schema") from error
-    original_key = digest({"tool": tool.name, "args": args})
+    ctx = execution_context(config)
+    original_key = execution_key(tool, args, ctx)
     permit = active_call.get()
     if permit and permit.key == original_key:
         if permit.consumed:
             raise SecurityViolation("Execution permission has already been consumed")
         return args, None
-    ctx = _context(config)
     store = SecurityStore()
     # A resumed request must not erase a previous source risk finding.
     for _ in range(4):
         risk = ctx.risk or store.has_risk(ctx.principal, ctx.thread_id)
-        decision = evaluate(tool.name, args, risk=risk)
+        decision = evaluate(tool.name, args, risk=risk, private_data=private_data_present())
         audit(
             "policy_decision",
             tool=tool.name,
@@ -96,10 +189,11 @@ def prepare(tool: BaseTool, args: dict, config: RunnableConfig | None) -> tuple[
         if decision.action == "deny":
             raise SecurityViolation(decision.reason)
         if decision.action == "allow":
-            return args, active_call.set(ExecutionPermit(digest({"tool": tool.name, "args": args})))
+            return args, active_call.set(_permit(tool, args, ctx))
         if not ctx.thread_id or not call_id.get():
             raise SecurityViolation("Approval requires a checkpointed tool call")
         version = resource_version(decision)
+        approved_policy = policy_binding()
         binding = digest(
             {
                 "principal": ctx.principal,
@@ -109,12 +203,7 @@ def prepare(tool: BaseTool, args: dict, config: RunnableConfig | None) -> tuple[
                 "args": args,
                 "resource_version": version,
                 "tool_identity": tool_identity(tool),
-                "policy": {
-                    "version": settings.security_policy_version,
-                    "workspace": settings.security_workspace,
-                    "domains": settings.security_allowed_domains,
-                    "mcp_tools": settings.security_mcp_tools,
-                },
+                "policy": approved_policy,
             }
         )
         request = store.request(binding, ctx.principal, ctx.thread_id)
@@ -148,13 +237,18 @@ def prepare(tool: BaseTool, args: dict, config: RunnableConfig | None) -> tuple[
             continue
         # Resource/permission checks are repeated after resume, immediately before execution.
         fresh = evaluate(
-            tool.name, args, risk=ctx.risk or store.has_risk(ctx.principal, ctx.thread_id)
+            tool.name,
+            args,
+            risk=ctx.risk or store.has_risk(ctx.principal, ctx.thread_id),
+            private_data=private_data_present(),
         )
-        if fresh.action == "deny" or resource_version(fresh) != version:
+        if (
+            fresh.action == "deny"
+            or resource_version(fresh) != version
+            or policy_binding() != approved_policy
+        ):
             raise SecurityViolation("Action or resource changed after approval")
-        return args, active_call.set(
-            ExecutionPermit(digest({"tool": tool.name, "args": args}), version)
-        )
+        return args, active_call.set(_permit(tool, args, ctx, version))
     raise SecurityViolation("Too many approval edits; start a new action")
 
 
@@ -195,7 +289,11 @@ class SecureTool(BaseTool):
             args, token = prepare(self.original, kwargs, config)
             audit("execution_started", tool=self.name)
             result = self.original.invoke(args, config=config)
-            result = untrusted(result, source=f"tool:{self.name}")
+            result = untrusted(
+                result,
+                source=f"tool:{self.name}",
+                private=self.name == "rag_search" or self.name.startswith("mcp_"),
+            )
             audit("execution_completed", tool=self.name)
             return result
         except (SecurityViolation, ApprovalError) as error:
@@ -210,7 +308,11 @@ class SecureTool(BaseTool):
             args, token = prepare(self.original, kwargs, config)
             audit("execution_started", tool=self.name)
             result = await self.original.ainvoke(args, config=config)
-            result = untrusted(result, source=f"tool:{self.name}")
+            result = untrusted(
+                result,
+                source=f"tool:{self.name}",
+                private=self.name == "rag_search" or self.name.startswith("mcp_"),
+            )
             audit("execution_completed", tool=self.name)
             return result
         except (SecurityViolation, ApprovalError) as error:

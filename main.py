@@ -26,7 +26,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from prometheus_client import (
@@ -45,12 +45,12 @@ from agent import (
     create_checkpointer,
     create_research_graph,
     event_stream_generator,
-    get_deep_agent_prompt,
     get_default_agent_prompt,
     get_emitter,
     initialize_enhanced_tools,
     remove_emitter,
 )
+from agent.core.context_builder import data_message
 from agent.workflows.evidence_extractor import extract_message_sources
 from common.agents_store import (
     AgentProfile,
@@ -292,7 +292,7 @@ async def log_requests(request: Request, call_next):
                 },
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        elif settings.security_enabled and settings.app_env in {"prod", "production"} and not internal_key and path.startswith("/api/"):
+        elif settings.app_env in {"prod", "production"} and not internal_key and path.startswith("/api/"):
             response = JSONResponse(status_code=503, content={"detail": "Production security requires trusted API authentication"})
         else:
             security_token = current_context.set(SecurityContext(
@@ -1698,7 +1698,7 @@ def _store_search(query: str, user_id: str, limit: int = 3) -> List[str]:
                     texts.append(str(text))
             elif isinstance(value, str):
                 texts.append(value)
-        return untrusted(texts[:limit], source="stored_memory")
+        return untrusted(texts[:limit], source="stored_memory", private=True)
     except Exception as e:
         logger.debug(f"Store search failed: {e}")
         return []
@@ -1728,7 +1728,6 @@ async def support_chat(request: Request, payload: SupportChatRequest):
         )
         state = {
             "messages": [
-                SystemMessage(content="You are a helpful support assistant."),
                 HumanMessage(content=payload.message),
             ],
             "user_id": user_id,
@@ -1739,9 +1738,7 @@ async def support_chat(request: Request, payload: SupportChatRequest):
         if store_memories:
             state["messages"].insert(
                 0,
-                SystemMessage(
-                    content="Stored memories:\n" + "\n".join(f"- {m}" for m in store_memories)
-                ),
+                data_message(store_memories, source="stored_memory"),
             )
 
         result = support_graph.invoke(state, config=config)
@@ -1873,22 +1870,17 @@ async def stream_agent_events(
             "is_cancelled": False,
         }
 
-        # Load long-term memories (store) and Mem0 (optional) and inject deep prompt if needed
+        # Seed only reference data; the model context entry point supplies application rules.
         messages: list[Any] = []
-        if mode_info.get("mode") == "agent" and agent_profile and agent_profile.system_prompt:
-            messages.append(SystemMessage(content=agent_profile.system_prompt))
-        if mode_info.get("use_deep_prompt"):
-            messages.append(SystemMessage(content=get_deep_agent_prompt()))
-
         store_memories = _store_search(input_text, user_id=user_id)
         if store_memories:
             store_text = "\n".join(f"- {m}" for m in store_memories)
-            messages.append(HumanMessage(content=f"Untrusted stored memories:\n{store_text}"))
+            messages.append(data_message(store_text, source="stored_memory"))
 
         mem_entries = fetch_memories(query=input_text, user_id=user_id)
         if mem_entries:
             memory_text = "\n".join(f"- {m}" for m in mem_entries)
-            messages.append(HumanMessage(content=f"Untrusted recalled knowledge:\n{memory_text}"))
+            messages.append(data_message(memory_text, source="recalled_memory"))
 
         if messages:
             initial_state["messages"] = messages
@@ -2513,20 +2505,15 @@ async def chat(request: Request, payload: ChatRequest):
             }
 
             messages: list[Any] = []
-            if mode_info.get("mode") == "agent" and agent_profile and agent_profile.system_prompt:
-                messages.append(SystemMessage(content=agent_profile.system_prompt))
-            if mode_info.get("use_deep_prompt"):
-                messages.append(SystemMessage(content=get_deep_agent_prompt()))
-
             store_memories = _store_search(last_message, user_id=user_id)
             if store_memories:
                 store_text = "\n".join(f"- {m}" for m in store_memories)
-                messages.append(HumanMessage(content=f"Untrusted stored memories:\n{store_text}"))
+                messages.append(data_message(store_text, source="stored_memory"))
 
             mem_entries = fetch_memories(query=last_message, user_id=user_id)
             if mem_entries:
                 memory_text = "\n".join(f"- {m}" for m in mem_entries)
-                messages.append(HumanMessage(content=f"Untrusted recalled knowledge:\n{memory_text}"))
+                messages.append(data_message(memory_text, source="recalled_memory"))
 
             if messages:
                 initial_state["messages"] = messages
@@ -2857,7 +2844,7 @@ async def remove_agent(agent_id: str):
 async def update_mcp_config(request: Request, payload: MCPConfigPayload):
     """Update MCP enable flag and servers config at runtime."""
     global mcp_enabled, mcp_servers_config, mcp_loaded_tools
-    if settings.security_enabled and settings.internal_api_key:
+    if settings.internal_api_key:
         context = current_context.get()
         admins = {item.strip() for item in settings.security_admin_principals.split(",") if item.strip()}
         if not context or context.principal not in admins:

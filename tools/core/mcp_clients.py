@@ -58,25 +58,24 @@ class MCPClientTool(BaseTool):
         return asyncio.run(self._arun(**kwargs))
 
     async def _arun(self, **kwargs):
-        from common.security.content import enabled
-        from common.security.context import active_call, current_context
-        from common.security.policy import digest
-        from common.security.runtime import untrusted
+        from common.security.context import current_context
+        from common.security.gateway import consume_execution_permit
+        from common.security.runtime import SecurityViolation, untrusted
         if not self.session:
             return f"Error: not connected to MCP server {self.server_id}"
         if self.owner_loop and asyncio.get_running_loop() is not self.owner_loop:
             future = asyncio.run_coroutine_threadsafe(self._arun(**kwargs), self.owner_loop)
             return await asyncio.wrap_future(future)
-        permit = active_call.get()
-        expected = digest({"tool": self.name, "args": kwargs})
-        if enabled() and (permit is None or not permit.consume(expected)):
-            return "[SECURITY_BLOCKED] MCP calls require permission for these exact arguments"
+        try:
+            consume_execution_permit(self, kwargs)
+        except SecurityViolation:
+            return "[SECURITY_BLOCKED] MCP calls require permission for this identity, tool and exact arguments"
         context = current_context.get()
         emitter = get_emitter_sync(context.thread_id if context and context.thread_id else self.thread_id)
         await emitter.emit(ToolEventType.TOOL_START, {"tool": self.name, "args": kwargs, "server": self.server_id})
         result = await asyncio.wait_for(self.session.call_tool(self.original_name, kwargs), timeout=60)
         parts = [getattr(item, "text", "") for item in (getattr(result, "content", None) or [])]
-        content = untrusted("\n".join(part for part in parts if isinstance(part, str)) or "No text output", source=f"mcp:{self.server_id}")
+        content = untrusted("\n".join(part for part in parts if isinstance(part, str)) or "No text output", source=f"mcp:{self.server_id}", private=True)
         await emitter.emit(ToolEventType.TOOL_RESULT, {"tool": self.name, "result": content,
                            "server": self.server_id, "success": not bool(getattr(result, "isError", False))})
         return content
