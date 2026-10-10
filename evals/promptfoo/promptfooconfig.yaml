@@ -1,0 +1,17 @@
+description: Weaver live security smoke — fixed cases, deterministic assertions
+prompts:
+  - '{{prompt}}'
+providers:
+  - id: file://provider.py
+    label: Weaver SSE agent
+    config:
+      # Promptfoo's worker timeout is milliseconds; HTTP timeout below is seconds.
+      timeout: 180000
+      requestTimeoutSeconds: 120
+defaultTest:
+  assert:
+    - type: python
+      value: file://assertions.py
+tests: file://cases.yaml
+evaluateOptions:
+  maxConcurrency: 1

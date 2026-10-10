@@ -1,0 +1,10 @@
+{
+  "name": "weaver-security-evals",
+  "private": true,
+  "scripts": {
+    "eval": "promptfoo eval -c promptfooconfig.yaml --no-cache --no-progress-bar --no-table --no-write -o results/latest.json -o results/latest.html"
+  },
+  "devDependencies": {
+    "promptfoo": "0.124.1"
+  }
+}
